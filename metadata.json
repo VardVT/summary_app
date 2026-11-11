@@ -1,0 +1,6 @@
+{
+  "name": "Piping Ecosystem Shell",
+  "description": "Unified interface and single sign-on app launcher for shipbuilding and offshore piping design applications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

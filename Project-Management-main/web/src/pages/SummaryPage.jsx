@@ -1,0 +1,548 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import { useAuth } from '../hooks/useAuth'
+import { useProject } from '../hooks/useProject'
+import {
+  buildSummaryGroupTable,
+  resolveGroupDensities,
+} from '../lib/progress'
+import { ROLES } from '../lib/roles'
+import { DonutRing, MultiSegmentDonut, VerticalBarChart } from '../components/Charts'
+import { IconVessel } from '../components/Icons'
+
+// ─── Improved color palette (teal as primary) ───────────────────────────────
+const BUCKET_COLOR = {
+  'Not Started (0%)': '#94a3b8',   // slate
+  '1-25%': '#f97316',              // orange
+  '26-50%': '#f59e0b',             // amber
+  '51-75%': '#14b8a6',             // teal-400
+  '76-99%': '#0d9488',             // primary teal
+  'Completed (100%)': '#10b981',   // emerald
+}
+
+// Helper: màu progress bar theo %
+function progressColor(percent) {
+  const p = Number(percent) || 0
+  if (p >= 100) return '#10b981'
+  if (p >= 76) return '#0d9488'
+  if (p >= 51) return '#14b8a6'
+  if (p >= 26) return '#f59e0b'
+  if (p > 0) return '#f97316'
+  return '#94a3b8'
+}
+
+function buildPercentBuckets(tasks) {
+  const buckets = {
+    'Not Started (0%)': 0,
+    '1-25%': 0,
+    '26-50%': 0,
+    '51-75%': 0,
+    '76-99%': 0,
+    'Completed (100%)': 0,
+  }
+  tasks.forEach((t) => {
+    const p = Number(t.percent_complete) || 0
+    if (p === 0) buckets['Not Started (0%)'] += 1
+    else if (p <= 25) buckets['1-25%'] += 1
+    else if (p <= 50) buckets['26-50%'] += 1
+    else if (p <= 75) buckets['51-75%'] += 1
+    else if (p < 100) buckets['76-99%'] += 1
+    else buckets['Completed (100%)'] += 1
+  })
+  return Object.entries(buckets).map(([name, value]) => ({
+    name,
+    value,
+    color: BUCKET_COLOR[name],
+  }))
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function inNext7Days(iso) {
+  if (!iso) return false
+  const today = new Date(todayIso())
+  const target = new Date(iso)
+  const diffDays = Math.round((target - today) / 86400000)
+  return diffDays >= 0 && diffDays <= 6
+}
+
+function RichProjectDashboard({ eyebrow, title }) {
+  const { caps } = useAuth()
+  const { currentProject, updateGroupWeights } = useProject()
+  const canEditWeights = caps.role === ROLES.ADMIN || caps.role === ROLES.MANAGER
+  const [tasks, setTasks] = useState([])
+  const [allSections, setAllSections] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [weights, setWeights] = useState(() => resolveGroupDensities(null))
+  const [weightSaving, setWeightSaving] = useState(false)
+  const [weightMsg, setWeightMsg] = useState('')
+  const saveTimer = useRef(null)
+  const pendingWeightsRef = useRef(null)
+
+  useEffect(() => {
+    setWeights(resolveGroupDensities(currentProject?.group_weights))
+  }, [currentProject?.id, currentProject?.group_weights])
+
+  const persistWeights = useCallback(
+    async (next) => {
+      if (!canEditWeights || !currentProject?.id) return
+      setWeightSaving(true)
+      setWeightMsg('')
+      try {
+        await updateGroupWeights(next)
+        pendingWeightsRef.current = null
+        setWeightMsg('Weights saved')
+        setTimeout(() => setWeightMsg(''), 2000)
+      } catch (err) {
+        setError(err?.message || 'Could not save weights.')
+        setWeights(resolveGroupDensities(currentProject?.group_weights))
+        pendingWeightsRef.current = null
+      } finally {
+        setWeightSaving(false)
+      }
+    },
+    [canEditWeights, currentProject?.id, currentProject?.group_weights, updateGroupWeights],
+  )
+
+  function scheduleWeightSave(next) {
+    pendingWeightsRef.current = next
+    setWeightMsg('')
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      const payload = pendingWeightsRef.current
+      if (payload) persistWeights(payload)
+    }, 400)
+  }
+
+  function flushWeightSave() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    const payload = pendingWeightsRef.current
+    if (payload) persistWeights(payload)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!currentProject?.id) {
+      setTasks([])
+      setAllSections([])
+      return
+    }
+    setLoading(true)
+    setError('')
+    Promise.all([
+      supabase
+        .from('tasks')
+        .select('id, section_id, percent_complete, start_date, finish_date, activity, zone, drawing_id')
+        .eq('project_id', currentProject.id),
+      supabase
+        .from('sections')
+        .select('id, header_name')
+        .eq('project_id', currentProject.id),
+    ]).then(([taskRes, secRes]) => {
+      if (taskRes.error) setError(taskRes.error.message)
+      else if (secRes.error) setError(secRes.error.message)
+      setTasks(taskRes.data || [])
+      setAllSections(secRes.data || [])
+      setLoading(false)
+    })
+  }, [currentProject?.id])
+
+  function onWeightChange(groupName, raw) {
+    const n = Math.max(0, Number(raw))
+    const next = {
+      ...weights,
+      [groupName]: Number.isFinite(n) ? n : 0,
+    }
+    setWeights(next)
+    scheduleWeightSave(next)
+  }
+
+  if (!currentProject?.id) {
+    return (
+      <div className="pm-panel" style={{ textAlign: 'center', padding: '40px' }}>
+        <IconVessel size={32} className="muted" />
+        <h3 style={{ marginTop: '12px' }}>No Vessel Selected</h3>
+        <p className="muted">Select a vessel from the sidebar to view its engineering progress summary.</p>
+      </div>
+    )
+  }
+  if (loading) return <p className="muted">Loading vessel metrics…</p>
+
+  const { allRow, rows } = buildSummaryGroupTable(tasks, allSections, weights)
+  const weightSumAll = Object.values(weights).reduce((s, n) => s + (Number(n) || 0), 0)
+  const buckets = buildPercentBuckets(rows.length ? tasks.filter((t) => t.percent_complete != null) : [])
+  const dueThisWeek = tasks
+    .filter((t) => inNext7Days(t.finish_date))
+    .sort((a, b) => (a.finish_date < b.finish_date ? -1 : 1))
+    .slice(0, 8)
+
+  const completedCount = tasks.filter((t) => Number(t.percent_complete) === 100).length
+  const inProgressCount = tasks.filter((t) => {
+    const p = Number(t.percent_complete) || 0
+    return p > 0 && p < 100
+  }).length
+  const notStartedCount = tasks.filter((t) => (Number(t.percent_complete) || 0) === 0).length
+
+  return (
+    <div className="stack summary-container">
+      {/* Top Hero Banner */}
+      <div className="pm-hero shell-manager summary-hero-card">
+        <div className="summary-hero-left">
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+          <p className="muted summary-vessel-meta">
+            Vessel <strong>{currentProject.ship_id}</strong> {currentProject.name ? `(${currentProject.name})` : ''} · <strong>{allRow.total}</strong> engineering tasks
+            {allRow.start ? ` · Start: ${allRow.start}` : ''}
+            {allRow.end ? ` · Finish: ${allRow.end}` : ''}
+            {allRow.days ? ` · Duration: ${allRow.days} days` : ''}
+          </p>
+        </div>
+        <div className="summary-hero-badge">
+          <span className="live-dot" />
+          <span>Live Vessel Progress</span>
+        </div>
+      </div>
+
+      {error ? <p className="error">{error}</p> : null}
+
+      {/* Quick KPI Stat Highlights */}
+      <div className="summary-kpi-row">
+        <div className="summary-kpi-tile">
+          <span className="summary-kpi-label">Overall Progress</span>
+          <div className="summary-kpi-value-group">
+            <span className="summary-kpi-num" style={{ color: progressColor(allRow.avgPercent) }}>
+              {allRow.avgPercent}%
+            </span>
+            <span className={`summary-status-pill ${allRow.avgPercent === 100 ? 'done' : allRow.avgPercent > 0 ? 'progress' : 'idle'}`}>
+              {allRow.avgPercent === 100 ? 'Completed' : allRow.avgPercent > 0 ? 'In Progress' : 'Pending'}
+            </span>
+          </div>
+        </div>
+
+        <div className="summary-kpi-tile">
+          <span className="summary-kpi-label">Total Engineering Tasks</span>
+          <div className="summary-kpi-value-group">
+            <span className="summary-kpi-num">{allRow.total}</span>
+            <span className="summary-kpi-sub">disciplines: {rows.filter(r => r.total > 0).length}</span>
+          </div>
+        </div>
+
+        <div className="summary-kpi-tile">
+          <span className="summary-kpi-label">Completed Tasks</span>
+          <div className="summary-kpi-value-group">
+            <span className="summary-kpi-num" style={{ color: '#10b981' }}>{completedCount}</span>
+            <span className="summary-kpi-sub">({allRow.total ? Math.round((completedCount / allRow.total) * 100) : 0}%)</span>
+          </div>
+        </div>
+
+        <div className="summary-kpi-tile">
+          <span className="summary-kpi-label">In Progress / Active</span>
+          <div className="summary-kpi-value-group">
+            <span className="summary-kpi-num" style={{ color: '#0d9488' }}>{inProgressCount}</span>
+            <span className="summary-kpi-sub">Not started: {notStartedCount}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Visual Row: Donut Ring & Due Tasks */}
+      <div className="summary-grid-2">
+        <div className="pm-panel summary-panel-card">
+          <div className="summary-card-head">
+            <div>
+              <h3>Overall Engineering Progress</h3>
+              <p className="muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                Weighted across all technical discipline densities
+              </p>
+            </div>
+          </div>
+
+          <div className="summary-donut-layout">
+            <div className="summary-donut-wrap">
+              <DonutRing
+                percent={allRow.avgPercent}
+                size={150}
+                stroke={16}
+                color="#0d9488"
+                trackColor="#ccfbf1"
+              />
+            </div>
+
+            <div className="summary-donut-metrics">
+              <div className="summary-donut-stat-item">
+                <span className="stat-bullet" style={{ background: '#10b981' }} />
+                <div className="stat-text">
+                  <span className="stat-name">Completed Progress</span>
+                  <strong style={{ color: '#10b981' }}>{allRow.avgPercent}%</strong>
+                </div>
+              </div>
+
+              <div className="summary-donut-stat-item">
+                <span className="stat-bullet" style={{ background: '#94a3b8' }} />
+                <div className="stat-text">
+                  <span className="stat-name">Remaining Workload</span>
+                  <strong>{allRow.remaining}%</strong>
+                </div>
+              </div>
+
+              <div className="summary-donut-stat-item">
+                <span className="stat-bullet" style={{ background: '#0d9488' }} />
+                <div className="stat-text">
+                  <span className="stat-name">Active Schedule Duration</span>
+                  <strong>{allRow.days != null ? `${allRow.days} calendar days` : 'Not set'}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pm-panel summary-panel-card">
+          <div className="summary-card-head">
+            <div>
+              <h3>Due This Week</h3>
+              <p className="muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                Milestones & deadlines within next 7 days
+              </p>
+            </div>
+            <span className="pill muted-pill">{dueThisWeek.length} tasks</span>
+          </div>
+
+          {dueThisWeek.length ? (
+            <div className="summary-due-list">
+              {dueThisWeek.map((t) => (
+                <div key={t.id} className="summary-due-item">
+                  <div className="summary-due-main">
+                    <strong className="summary-due-title">{t.activity || 'Untitled task'}</strong>
+                    <div className="summary-due-meta">
+                      <span className="summary-due-zone">{t.zone || 'General Zone'}</span>
+                      {t.drawing_id ? <span className="summary-due-dwg">· {t.drawing_id}</span> : null}
+                    </div>
+                  </div>
+                  <div className="summary-due-tag">
+                    <span className="summary-due-date">{t.finish_date}</span>
+                    <span
+                      className="summary-due-pct"
+                      style={{ color: progressColor(t.percent_complete), fontWeight: 700 }}
+                    >
+                      {(Number(t.percent_complete) || 0)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="summary-empty-due">
+              <span style={{ fontSize: '24px' }}>✓</span>
+              <p style={{ margin: '6px 0 0', fontSize: '13px', fontWeight: 600 }}>No upcoming deadlines this week</p>
+              <span className="muted" style={{ fontSize: '11.5px' }}>All engineering activities are on track.</span>
+            </div>
+          )}
+        </div>
+
+        {/* Technical Group Breakdown Table */}
+        <div className="pm-panel summary-panel-card" style={{ gridColumn: '1 / -1' }}>
+          <div className="summary-card-head">
+            <div>
+              <h3>Technical Discipline Breakdown</h3>
+              <p className="muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                Discipline weight allocation, progress completion, and active date spans
+              </p>
+            </div>
+            {canEditWeights ? (
+              <span className="summary-weight-status">
+                {weightSaving ? 'Saving weights…' : weightMsg || `Total Weight: ${weightSumAll}% · Live updates`}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="pm-table-wrap">
+            <table className="pm-table summary-breakdown-table">
+              <thead>
+                <tr>
+                  <th style={{ minWidth: '180px' }}>Technical Group</th>
+                  <th style={{ width: '80px', textAlign: 'center' }}>Tasks</th>
+                  <th style={{ width: '110px' }}>Start Date</th>
+                  <th style={{ width: '110px' }}>End Date</th>
+                  <th style={{ width: '80px', textAlign: 'center' }}>Days</th>
+                  <th style={{ minWidth: '220px' }}>% Progress</th>
+                  <th style={{ width: '100px', textAlign: 'center' }}>Remaining</th>
+                  <th style={{ width: '120px', textAlign: 'center' }}>Discipline Weight</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="summary-total-row">
+                  <td>
+                    <strong>{allRow.name}</strong>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span className="summary-pill-count">{allRow.total}</span>
+                  </td>
+                  <td>{allRow.start || '—'}</td>
+                  <td>{allRow.end || '—'}</td>
+                  <td style={{ textAlign: 'center' }}>{allRow.days ?? '—'}</td>
+                  <td>
+                    <div className="summary-progress-cell">
+                      <div className="summary-bar-track">
+                        <div
+                          className="summary-bar-fill"
+                          style={{
+                            width: `${allRow.avgPercent}%`,
+                            background: progressColor(allRow.avgPercent),
+                          }}
+                        />
+                      </div>
+                      <strong className="summary-pct-text" style={{ color: progressColor(allRow.avgPercent) }}>
+                        {allRow.avgPercent}%
+                      </strong>
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'center', color: 'var(--ink-muted)' }}>{allRow.remaining}%</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span className="summary-weight-badge total">{allRow.density}</span>
+                  </td>
+                </tr>
+                {rows.map((r) => (
+                  <tr key={r.name}>
+                    <td>
+                      <span className="summary-group-name">{r.name}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span className="summary-pill-count">{r.total}</span>
+                    </td>
+                    <td className="muted">{r.start || '—'}</td>
+                    <td className="muted">{r.end || '—'}</td>
+                    <td style={{ textAlign: 'center' }} className="muted">{r.days ?? '—'}</td>
+                    <td>
+                      <div className="summary-progress-cell">
+                        <div className="summary-bar-track">
+                          <div
+                            className="summary-bar-fill"
+                            style={{
+                              width: `${r.avgPercent}%`,
+                              background: progressColor(r.avgPercent),
+                            }}
+                          />
+                        </div>
+                        <strong className="summary-pct-text" style={{ color: progressColor(r.avgPercent) }}>
+                          {r.avgPercent}%
+                        </strong>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', color: 'var(--ink-muted)' }}>{r.remaining}%</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {canEditWeights ? (
+                        <div className="weight-edit">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000}
+                            step={1}
+                            aria-label={`${r.name} weight`}
+                            value={weights[r.name] ?? r.density}
+                            onChange={(e) => onWeightChange(r.name, e.target.value)}
+                            onBlur={flushWeightSave}
+                          />
+                          <span className="weight-edit-suffix">%</span>
+                        </div>
+                      ) : (
+                        <span className="summary-weight-badge">{r.density}%</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Discipline Donut Segment Breakdown */}
+        {rows
+          .filter((r) => r.total > 0)
+          .map((r) => (
+            <div className="pm-panel summary-panel-card" key={r.name}>
+              <div className="summary-card-head">
+                <div>
+                  <h3 style={{ fontSize: '13.5px' }}>{r.name} Discipline Breakdown</h3>
+                  <span className="muted" style={{ fontSize: '11.5px' }}>{r.total} tasks allocated</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+                <MultiSegmentDonut segments={r.pie} solid centerLabel={`${r.total}`} size={118} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', flex: 1, minWidth: '150px' }}>
+                  {r.pie.map((s) => (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }} key={s.name}>
+                      <span
+                        style={{
+                          width: '9px',
+                          height: '9px',
+                          borderRadius: '50%',
+                          background: s.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span>{s.name}</span>
+                      <strong style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                        {s.value} ({Math.round((s.value / r.total) * 100)}%)
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+
+        {/* Histogram */}
+        <div className="pm-panel summary-panel-card" style={{ gridColumn: '1 / -1' }}>
+          <div className="summary-card-head">
+            <div>
+              <h3>Progress Distribution Histogram</h3>
+              <p className="muted" style={{ margin: '2px 0 0', fontSize: '12px' }}>
+                Task distribution across completion ranges
+              </p>
+            </div>
+          </div>
+          <div style={{ marginTop: '12px' }}>
+            <VerticalBarChart items={buckets} height={170} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function SummaryPage() {
+  const { caps } = useAuth()
+
+  if (caps.shell === 'engineer') {
+    return (
+      <div className="stack">
+        <div className="pm-hero shell-engineer">
+          <p className="eyebrow">Engineer Work Summary</p>
+          <h2>My Assigned Tasks</h2>
+        </div>
+        <div className="pm-panel">
+          <p className="muted">
+            Open <strong>Vessel → Tasks</strong> in the sidebar to update activities and submit for review.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (caps.shell === 'senior') {
+    return <RichProjectDashboard eyebrow="Senior Engineer Summary" title="Vessel Discipline Control" />
+  }
+
+  return <RichProjectDashboard eyebrow="Executive Summary" title="Vessel Engineering Overview" />
+}

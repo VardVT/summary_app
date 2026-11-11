@@ -1,0 +1,260 @@
+import { supabase } from './supabase'
+import { LIVE_COMMENT_SECTION } from './roles'
+
+const BUCKET = 'project-drawings'
+
+export function drawingPublicUrl(filePath) {
+  if (!filePath) return null
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+  return data?.publicUrl || null
+}
+
+export async function listDrawings(projectId) {
+  const { data, error } = await supabase
+    .from('drawings')
+    .select(
+      'id, project_id, title, file_path, file_size, file_type, version, page_count, status, created_by, created_at, archived_at'
+    )
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
+export async function getDrawing(drawingId) {
+  const { data, error } = await supabase
+    .from('drawings')
+    .select('*')
+    .eq('id', drawingId)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
+export async function listAnnotations(drawingId) {
+  const { data, error } = await supabase
+    .from('drawing_annotations')
+    .select(
+      `
+      id, drawing_id, page_number, task_id, type, x_percent, y_percent,
+      vector_data, color, label, created_by, created_at,
+      task:tasks(id, title, activity, status, percent_complete, assignee_id, section_id)
+    `
+    )
+    .eq('drawing_id', drawingId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data || []
+}
+
+export async function uploadDrawingPdf({ projectId, file, title, version, userId }) {
+  if (!projectId || !file) throw new Error('Project and file are required.')
+  const safeName = String(file.name || 'drawing.pdf').replace(/[^\w.\-()+ ]+/g, '_')
+  const drawingId = crypto.randomUUID()
+  const filePath = `${projectId}/${drawingId}/${safeName}`
+
+  const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, file, {
+    contentType: file.type || 'application/pdf',
+    upsert: false,
+  })
+  if (upErr) throw upErr
+
+  const { data, error } = await supabase
+    .from('drawings')
+    .insert({
+      id: drawingId,
+      project_id: projectId,
+      title: (title || file.name || 'Untitled drawing').trim(),
+      file_path: filePath,
+      file_size: file.size || null,
+      file_type: 'pdf',
+      version: version || 'Rev 1',
+      status: 'in_review',
+      created_by: userId || null,
+    })
+    .select('*')
+    .single()
+
+  if (error) {
+    await supabase.storage.from(BUCKET).remove([filePath])
+    throw error
+  }
+  return data
+}
+
+export async function updateDrawingPageCount(drawingId, pageCount) {
+  const { error } = await supabase
+    .from('drawings')
+    .update({ page_count: pageCount, updated_at: new Date().toISOString() })
+    .eq('id', drawingId)
+  if (error) throw error
+}
+
+export async function deleteDrawing(drawing) {
+  if (!drawing?.id) return
+  if (drawing.file_path) {
+    await supabase.storage.from(BUCKET).remove([drawing.file_path])
+  }
+  const { error } = await supabase.from('drawings').delete().eq('id', drawing.id)
+  if (error) throw error
+}
+
+/**
+ * Ensure vessel has a Live Comment section (drawing markup inbox).
+ * Creates it if missing. Not counted in Summary % weights.
+ */
+export async function ensureLiveCommentSection(projectId) {
+  if (!projectId) throw new Error('Project is required.')
+  const { data: existing, error: findErr } = await supabase
+    .from('sections')
+    .select('id, header_name, sort_order, project_id')
+    .eq('project_id', projectId)
+    .eq('header_name', LIVE_COMMENT_SECTION)
+    .maybeSingle()
+  if (findErr) throw findErr
+  if (existing) return existing
+
+  const { data: created, error: createErr } = await supabase
+    .from('sections')
+    .insert({
+      project_id: projectId,
+      header_name: LIVE_COMMENT_SECTION,
+      sort_order: 100,
+    })
+    .select('id, header_name, sort_order, project_id')
+    .single()
+  if (createErr) throw createErr
+  return created
+}
+
+/**
+ * Create engineering task in Live Comment + rectangle callout annotation.
+ * x/y = top-left %; width/height stored in vector_data.
+ */
+export async function createPinWithTask({
+  drawing,
+  pageNumber,
+  xPercent,
+  yPercent,
+  widthPercent,
+  heightPercent,
+  activity,
+  assigneeId,
+  zone,
+  userId,
+  color = '#EF4444',
+}) {
+  const title = String(activity || '').trim()
+  if (!title) throw new Error('Task title is required.')
+  if (!drawing?.project_id) throw new Error('Drawing project is missing.')
+
+  const liveSection = await ensureLiveCommentSection(drawing.project_id)
+
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .insert({
+      project_id: drawing.project_id,
+      section_id: liveSection.id,
+      title,
+      activity: title,
+      zone: zone || null,
+      drawing_id: drawing.title || null,
+      assignee_id: assigneeId || null,
+      status: 'Not Started',
+      percent_complete: 0,
+    })
+    .select('id, title, activity, status, percent_complete, assignee_id, section_id')
+    .single()
+  if (taskErr) throw taskErr
+
+  const pinLabel = `#${String(title).slice(0, 24)}`
+  const { data: annotation, error: annErr } = await supabase
+    .from('drawing_annotations')
+    .insert({
+      drawing_id: drawing.id,
+      page_number: pageNumber || 1,
+      task_id: task.id,
+      type: 'rect',
+      x_percent: xPercent,
+      y_percent: yPercent,
+      color,
+      label: pinLabel,
+      created_by: userId || null,
+      vector_data: {
+        width_percent: widthPercent,
+        height_percent: heightPercent,
+      },
+    })
+    .select(
+      `
+      id, drawing_id, page_number, task_id, type, x_percent, y_percent,
+      vector_data, color, label, created_by, created_at
+    `
+    )
+    .single()
+
+  if (annErr) {
+    await supabase.from('tasks').delete().eq('id', task.id)
+    throw annErr
+  }
+
+  return { task, annotation: { ...annotation, task }, section: liveSection }
+}
+
+export async function updateAnnotationCalloutPosition(annotation, { x, y }) {
+  if (!annotation?.id) throw new Error('Annotation id is required.')
+  const nextVector = {
+    ...(annotation.vector_data || {}),
+    callout_x_percent: x,
+    callout_y_percent: y,
+  }
+  const { data, error } = await supabase
+    .from('drawing_annotations')
+    .update({
+      vector_data: nextVector,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', annotation.id)
+    .select(
+      `
+      id, drawing_id, page_number, task_id, type, x_percent, y_percent,
+      vector_data, color, label, created_by, created_at
+    `
+    )
+    .single()
+  if (error) throw error
+  return { ...data, task: annotation.task }
+}
+
+/**
+ * Remove mark from drawing and its linked task.
+ * Deletes the task first (while task_id is still known), then the annotation.
+ */
+export async function deleteAnnotationMark(annotation) {
+  if (!annotation?.id) return
+  const taskId = annotation.task_id || annotation.task?.id || null
+
+  if (taskId) {
+    const { data: deletedTasks, error: taskErr } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .select('id')
+    if (taskErr) throw new Error(taskErr.message || 'Failed to delete linked task')
+    if (!deletedTasks?.length) {
+      throw new Error(
+        'Linked task was not deleted (permission denied by database policy). Run migration 014_fix_task_delete_rls.sql.'
+      )
+    }
+  }
+
+  const { data: deletedMarks, error } = await supabase
+    .from('drawing_annotations')
+    .delete()
+    .eq('id', annotation.id)
+    .select('id')
+  if (error) throw new Error(error.message || 'Failed to delete comment')
+  if (!deletedMarks?.length) {
+    throw new Error('Comment was not deleted (permission denied).')
+  }
+}

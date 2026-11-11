@@ -1,0 +1,121 @@
+import { AppConfig } from '../types';
+
+/**
+ * Central registry of standalone applications for the Shipbuilding & Offshore Piping Department.
+ * Adding a new child app only requires adding an entry to this array.
+ */
+export const APPS_CONFIG: AppConfig[] = [
+  {
+    id: 'section-task-manager',
+    label: 'Progress Management',
+    description: 'Track piping section progress, line isometric allocations, drawing task reviews, and engineering team workload.',
+    icon: 'CheckCircle2',
+    category: 'Design',
+    type: 'iframe',
+    src: './project-management/index.html',
+    requiredCap: 'view_drawings',
+    status: 'active',
+    rev: 'REV A',
+    tag: 'APP-01',
+    color: 'bg-[#0284C7]', // Blue
+  },
+  {
+    id: 'drawing-review',
+    label: 'Drawing Review & Markup',
+    description: 'Collaborative 2D & 3D ISO drawing review, redlining, and revision approval workflow.',
+    icon: 'ClipboardCheck',
+    category: 'Control',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/drawing-review/',
+    requiredCap: 'view_drawings',
+    status: 'active',
+    rev: 'REV C',
+    tag: 'APP-02',
+    color: 'bg-[#D97706]', // Amber
+  },
+  {
+    id: 'plan-drawing-list',
+    label: 'Plan Drawing List (PDL)',
+    description: 'Master index of piping arrangement plans, P&IDs, isometric drawings, and revision control.',
+    icon: 'FileText',
+    category: 'Design',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/plan-drawing-list/',
+    requiredCap: 'view_drawings',
+    status: 'active',
+    rev: 'REV B',
+    tag: 'APP-03',
+    color: 'bg-[#059669]', // Emerald
+  },
+  {
+    id: 'line-list',
+    label: 'Line List & Spool Index',
+    description: 'Database of pipe line numbers, fluid service, operating pressures, temperatures, and insulation specs.',
+    icon: 'Menu',
+    category: 'Control',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/line-list/',
+    requiredCap: 'edit_line_list',
+    status: 'active',
+    rev: 'REV A',
+    tag: 'APP-04',
+    color: 'bg-[#7C3AED]', // Purple
+  },
+  {
+    id: 'mto-manager',
+    label: 'Material Take-Off (MTO)',
+    description: 'Piping material summary, valve schedule, pipe fittings, flange rating, and weight breakdown.',
+    icon: 'Box',
+    category: 'Materials',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/mto-manager/',
+    requiredCap: 'view_mto',
+    status: 'active',
+    rev: 'REV D',
+    tag: 'APP-05',
+    color: 'bg-[#E11D48]', // Rose
+  },
+  {
+    id: 'transmittal',
+    label: 'Transmittal & Submittals',
+    description: 'Formal document transmittal system for shipyard class societies and shipowner approval logs.',
+    icon: 'Navigation',
+    category: 'Control',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/transmittal-log/',
+    requiredCap: 'approve_transmittals',
+    status: 'active',
+    rev: 'REV A',
+    tag: 'APP-06',
+    color: 'bg-[#0891B2]', // Cyan
+  },
+  {
+    id: 'calendar',
+    label: 'Milestones & Mil-Calendar',
+    description: 'Shipbuilding key dates, Model Freeze milestones, Class review cut-offs, and spool fabrication schedules.',
+    icon: 'Calendar',
+    category: 'Control',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/piping-calendar/',
+    status: 'beta',
+    rev: 'REV A',
+    tag: 'APP-07',
+    color: 'bg-[#EA580C]', // Orange
+  },
+  {
+    id: 'reports',
+    label: 'Technical Reports & Analytics',
+    description: '3D Clash detection metrics, weight margin reports, spool progress KPIs, and material cost variances.',
+    icon: 'TrendingUp',
+    category: 'Reporting',
+    type: 'iframe',
+    src: 'https://piping-dept.github.io/piping-reports/',
+    requiredCap: 'export_reports',
+    status: 'soon',
+    rev: 'REV 0',
+    tag: 'APP-08',
+    color: 'bg-[#0F766E]', // Teal
+  }
+];
+
+export const APP_CATEGORIES = ['Design', 'Control', 'Materials', 'Reporting'] as const;
