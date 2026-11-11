@@ -300,12 +300,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     if (isSupabaseConfigured && supabase) {
       const loadProfileForUser = async (authUser: any) => {
-        let derivedRole: UserRole = (authUser.user_metadata?.role as UserRole) || 'engineer';
-        let userName = authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'VARD Engineer';
-        let dept = authUser.user_metadata?.department || 'VARD Piping Design';
-        let sec = authUser.user_metadata?.section || 'Piping Section';
-        let empId: string | undefined = undefined;
-        let posTitle: string | undefined = undefined;
+        // 1. Try to match from built-in directory first (most reliable)
+        const dirEntry = DEFAULT_DIRECTORY_USERS.find(
+          u => u.id === authUser.id || u.email.toLowerCase() === (authUser.email || '').toLowerCase()
+        );
+
+        let derivedRole: UserRole = dirEntry?.role || (authUser.user_metadata?.role as UserRole) || 'engineer';
+        let userName = dirEntry?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'VARD Engineer';
+        let dept = dirEntry?.department || authUser.user_metadata?.department || 'VARD Piping Design';
+        let sec = dirEntry?.section || authUser.user_metadata?.section || 'Piping Section';
+        let empId: string | undefined = dirEntry?.employeeId;
+        let posTitle: string | undefined = dirEntry?.positionTitle;
         let avatar = authUser.user_metadata?.avatar_url;
 
         try {
@@ -319,16 +324,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
           if (profile) {
             userName = profile.display_name || profile.name || profile.full_name || userName;
-            const rawPos = (profile.position || profile.role || '').toString().toLowerCase();
-            if (rawPos.includes('admin')) derivedRole = 'admin';
-            else if (rawPos.includes('manager') || rawPos.includes('lead') || rawPos.includes('senior')) derivedRole = 'lead';
-            else if (rawPos.includes('viewer') || rawPos.includes('inspect')) derivedRole = 'viewer';
-            else if (['admin', 'lead', 'engineer', 'viewer'].includes(profile.role)) derivedRole = profile.role as UserRole;
+
+            // Determine role from profile - check explicit role field first, then position keywords
+            const rawPos = (profile.position || '').toString().toLowerCase();
+            const rawRole = (profile.role || '').toString().toLowerCase();
+
+            if (['admin', 'lead', 'engineer', 'viewer'].includes(rawRole)) {
+              // Trust explicit role field in profiles table
+              derivedRole = rawRole as UserRole;
+            } else if (rawPos.includes('admin')) {
+              derivedRole = 'admin';
+            } else if (rawPos.includes('manager') || rawPos.includes('lead') || rawPos.includes('senior') || rawPos.includes('chief')) {
+              derivedRole = 'lead';
+            } else if (rawPos.includes('viewer') || rawPos.includes('inspect')) {
+              derivedRole = 'viewer';
+            }
+            // If still can't determine from profile, keep the dirEntry role (already set above)
 
             dept = profile.department || dept;
             sec = profile.section || (profile.position ? `VARD ${profile.position}` : sec);
-            empId = profile.employee_id ? String(profile.employee_id) : undefined;
-            posTitle = profile.position || undefined;
+            empId = profile.employee_id ? String(profile.employee_id) : empId;
+            posTitle = profile.position || posTitle;
             avatar = profile.avatar_url || avatar;
           }
         } catch (err) {
