@@ -143,7 +143,7 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
           <iframe
             key={iframeKey}
             ref={iframeRef}
-            src={app.src}
+            src={app.src.startsWith('./') ? app.src.substring(1) : app.src}
             title={app.label}
             onLoad={handleIframeLoad}
             onError={handleIframeError}

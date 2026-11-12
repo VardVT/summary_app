@@ -18,7 +18,7 @@ function versionFilePlugin(buildId) {
     <script>
       (function () {
         var embedded = ${JSON.stringify(buildId)};
-        var base = document.querySelector('base')?.href || ${JSON.stringify(process.env.VITE_BASE || '/')};
+        var base = document.querySelector('base')?.href || ${JSON.stringify(process.env.VITE_BASE || './')};
         if (!base.endsWith('/')) base += '/';
         fetch(base + 'version.json?_=' + Date.now(), { cache: 'no-store' })
           .then(function (r) { return r.ok ? r.json() : null; })
@@ -59,10 +59,9 @@ function versionFilePlugin(buildId) {
 
 const buildId = `${Date.now()}`
 
-// GitHub Pages: set VITE_BASE=/repo-name/ when deploying under a project site
 export default defineConfig({
   plugins: [react(), versionFilePlugin(buildId)],
-  base: process.env.VITE_BASE || '/',
+  base: './',
   server: {
     headers: {
       'Cache-Control': 'no-store',
