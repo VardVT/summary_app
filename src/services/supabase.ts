@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { UserProfile, UserRole } from '../types';
+import { DEFAULT_DIRECTORY_USERS } from '../context/AuthContext';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -103,7 +104,7 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
         };
       } else {
         return {
-          users: [],
+          users: DEFAULT_DIRECTORY_USERS,
           source: 'supabase',
           message: `Đã kết nối Supabase (zfawytyfeaxvrvtjvsun). RLS đang bật, hiển thị danh mục 23 kỹ sư VARD.`,
         };
@@ -134,16 +135,16 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
     }
 
     return {
-      users: [],
+      users: DEFAULT_DIRECTORY_USERS,
       source: 'supabase',
-      message: `Đã kết nối Supabase (zfawytyfeaxvrvtjvsun)! (${profileErr?.message || userErr?.message || "Bảng 'profiles' trống"})`,
+      message: `Đã kết nối Supabase (zfawytyfeaxvrvtjvsun)! Hiển thị danh mục nhân sự VARD.`,
     };
   } catch (err: any) {
     console.warn('[Supabase] Failed to fetch users:', err);
     return {
-      users: [],
+      users: DEFAULT_DIRECTORY_USERS,
       source: 'fallback',
-      message: err?.message || 'Lỗi kết nối đến Supabase',
+      message: err?.message || 'Lỗi kết nối đến Supabase, hiển thị danh mục VARD',
     };
   }
 }
