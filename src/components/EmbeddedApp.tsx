@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
 import { useNotifications } from '../hooks/useNotifications';
 import { APPS_CONFIG } from '../config/apps';
+import { DrawingReviewWorkspace } from './DrawingReviewWorkspace';
 
 interface EmbeddedAppProps {
   app: AppConfig;
@@ -134,18 +135,22 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
         </div>
       )}
 
-      {/* Main Content Area: 100% Full-bleed iframe without duplicate toolbars */}
+      {/* Main Content Area */}
       <div className="flex-1 w-full h-full relative overflow-hidden bg-slate-950">
-        <iframe
-          key={iframeKey}
-          ref={iframeRef}
-          src={app.src}
-          title={app.label}
-          onLoad={handleIframeLoad}
-          onError={handleIframeError}
-          className="w-full h-full border-0 bg-white"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-        />
+        {app.id === 'drawing-review' ? (
+          <DrawingReviewWorkspace />
+        ) : (
+          <iframe
+            key={iframeKey}
+            ref={iframeRef}
+            src={app.src}
+            title={app.label}
+            onLoad={handleIframeLoad}
+            onError={handleIframeError}
+            className="w-full h-full border-0 bg-white"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+          />
+        )}
 
         {/* Error Fallback Banner overlay if needed */}
         {hasError && (
