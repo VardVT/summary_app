@@ -202,19 +202,24 @@ export async function downloadReportXlsx(projectId, shipId) {
   const { workbook, counts } = await exportReportWorkbook(projectId)
   const fileName = `Report_${shipId || 'project'}_${new Date().toISOString().slice(0, 10)}.xlsx`
   
-  const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
-  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  document.body.appendChild(a)
-  a.click()
-  setTimeout(() => {
-    try {
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (e) {}
-  }, 1500)
+  try {
+    XLSX.writeFile(workbook, fileName)
+  } catch (err) {
+    const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => {
+      try {
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch (e) {}
+    }, 2000)
+  }
   return counts
 }
