@@ -18,13 +18,25 @@ import {
   FolderOpen, 
   X, 
   Sparkles, 
-  UserCheck 
+  UserCheck,
+  Download,
+  FileCode
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
 import { useNotifications } from '../hooks/useNotifications';
 import { DEFAULT_DIRECTORY_USERS } from '../context/AuthContext';
 import { UserProfile } from '../types';
+import { jsPDF } from 'jspdf';
+import { 
+  DxfData, 
+  parseDxf, 
+  renderDxfToCanvas, 
+  exportDxfToPdf, 
+  exportDxfWithMarkups, 
+  generateCadDxfFromPdfPins,
+  downloadDxfFile 
+} from '../utils/dxfHandler';
 
 // Configure PDF.js worker
 if (typeof window !== 'undefined') {
@@ -229,72 +241,233 @@ export interface MarkupPin {
   updatedAt?: string;
 }
 
+// Directory engineers (excluding pure viewers)
+export const VARD_ENGINEERS = DEFAULT_DIRECTORY_USERS.filter(u => u.role !== 'viewer');
+
+// Helper to resolve an engineer profile from any detected DRAWN string
+export function resolveEngineerFromDrawnCode(rawCode: string): { code: string; engineer: UserProfile | null } {
+  if (!rawCode || !rawCode.trim()) {
+    return { code: '', engineer: null };
+  }
+
+  // Strip leading prefixes like "BY:", "BY ", "DRAWN:", trailing punctuation
+  const trimmed = rawCode.trim().replace(/^(?:DRAWN|DWN|DESIGNED|PIC|BY)[:\s\-]+/i, '').trim();
+  const withoutTrailing = trimmed.replace(/[:;,]+$/, '').trim();
+  const withoutDot = withoutTrailing.replace(/\.$/, '').trim();
+  const norm = trimmed.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+  if (!trimmed || trimmed.toUpperCase() === 'BY') {
+    return { code: '', engineer: null };
+  }
+
+  // 1. Direct dictionary lookup
+  const directEmail = PIC_ABBREVIATIONS[trimmed] || 
+                      PIC_ABBREVIATIONS[trimmed.toUpperCase()] ||
+                      PIC_ABBREVIATIONS[withoutTrailing] ||
+                      PIC_ABBREVIATIONS[withoutDot] ||
+                      PIC_ABBREVIATIONS[norm];
+
+  if (directEmail) {
+    const match = VARD_ENGINEERS.find(e => e.email.toLowerCase() === directEmail.toLowerCase());
+    if (match) return { code: trimmed, engineer: match };
+  }
+
+  // 2. Alphanumeric normalized lookup across all keys
+  for (const [key, em] of Object.entries(PIC_ABBREVIATIONS)) {
+    const normKey = key.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (normKey && normKey === norm) {
+      const match = VARD_ENGINEERS.find(e => e.email.toLowerCase() === em.toLowerCase());
+      if (match) return { code: trimmed, engineer: match };
+    }
+  }
+
+  // 3. Match against Vietnamese name or email username
+  const stripAccents = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const unaccented = stripAccents(trimmed);
+
+  const matchByName = VARD_ENGINEERS.find(e => {
+    const normName = stripAccents(e.name);
+    const emailPrefix = e.email.split('@')[0].toLowerCase().replace(/\./g, ' ');
+    return normName.includes(unaccented) || emailPrefix.includes(unaccented);
+  });
+  if (matchByName) return { code: trimmed, engineer: matchByName };
+
+  // 4. Initials match (e.g. "Nguyen Tran Hung" -> "NTH")
+  for (const eng of VARD_ENGINEERS) {
+    const words = stripAccents(eng.name).split(/\s+/).filter(Boolean);
+    const initials = words.map(w => w[0]).join('').toUpperCase();
+    if (initials === norm) {
+      return { code: trimmed, engineer: eng };
+    }
+  }
+
+  return { code: trimmed, engineer: null };
+}
+
+// Pure async function to parse DRAWN information from a PDF.js page
+export async function parseDrawnFromPage(page: any): Promise<DrawnDetection> {
+  try {
+    const textContent = await page.getTextContent({ includeMarkedContent: true });
+    const rawItems: string[] = (textContent.items || [])
+      .map((it: any) => (typeof it.str === 'string' ? it.str.trim() : ''))
+      .filter((s: string) => s.length > 0);
+
+    // If textContent was empty, also check annotations (AutoCAD SHX text comments)
+    if (rawItems.length === 0 && typeof page.getAnnotations === 'function') {
+      try {
+        const annots = await page.getAnnotations();
+        for (const a of (annots || [])) {
+          if (a.contents && typeof a.contents === 'string') {
+            rawItems.push(a.contents.trim());
+          }
+        }
+      } catch (annotErr) {
+        // ignore
+      }
+    }
+
+    const compactText = rawItems.join(' ').replace(/\s+/g, ' ');
+    let detected: { code: string; engineer: UserProfile | null } = { code: '', engineer: null };
+
+    // Strategy 1: Targeted single token immediately following DRAWN / DWN / PIC (e.g. "DRAWN: N.D.D." -> "N.D.D.")
+    const singleTokenMatch = compactText.match(/\b(?:DRAWN|DWN|DESIGNED|DES|DRAWER|PIC)\s*(?:BY)?\s*[:\s\-]*\s*([A-Za-z0-9._-]+)/i);
+    if (singleTokenMatch && singleTokenMatch[1]) {
+      const token = singleTokenMatch[1].trim();
+      if (!/^(BY|DATE|REV|SCALE|TITLE|DWG|SHEET|MARKFC|ISO|SHIP|DIVISION|SYSTEM)$/i.test(token) && !/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(token)) {
+        const res = resolveEngineerFromDrawnCode(token);
+        if (res.engineer) {
+          detected = res;
+        } else if (!detected.code) {
+          detected = res;
+        }
+      }
+    }
+
+    // Strategy 2: Up to next CAD field label (stops before MARKFC, ISO, DATE, etc.)
+    if (!detected.engineer) {
+      const upToLabelMatch = compactText.match(/\b(?:DRAWN|DWN|DESIGNED|DES|DRAWER|PIC)\s*(?:BY)?\s*[:\s\-]*\s*([^:\n\r]+?)(?=\s+(?:MARKFC|ISO|SFI|INTERNAL|CHECKED|CHK|APPROVED|APP|DATE|REV|SCALE|SHEET|TITLE|SHIP|SYSTEM|SPEC|PALLET|DIV|STATUS|\d{1,4}[/-]\d{1,2}[/-]\d{1,4})\b|$)/i);
+      if (upToLabelMatch && upToLabelMatch[1]) {
+        const token = upToLabelMatch[1].trim();
+        if (token && !/^(BY|DATE|REV|SCALE|TITLE|DWG|SHEET|MARKFC|ISO|SHIP)$/i.test(token)) {
+          const res = resolveEngineerFromDrawnCode(token);
+          if (res.engineer) {
+            detected = res;
+          }
+        }
+      }
+    }
+
+    // Strategy 3: Sequential item scan across CAD title block text elements
+    if (!detected.engineer) {
+      for (let i = 0; i < rawItems.length; i++) {
+        const item = rawItems[i];
+        if (/\b(DRAWN|DWN|DESIGNED|DRAWER|PIC)\b/i.test(item)) {
+          const inlineMatch = item.match(/\b(?:DRAWN|DWN|DESIGNED|PIC)\s*(?:BY)?\s*[:\s\-]*\s*([A-Za-z0-9._-]+)/i);
+          if (inlineMatch?.[1]) {
+            const res = resolveEngineerFromDrawnCode(inlineMatch[1]);
+            if (res.engineer) {
+              detected = res;
+              break;
+            }
+          }
+
+          for (let j = 1; j <= 4 && i + j < rawItems.length; j++) {
+            const nextItem = rawItems[i + j].trim();
+            if (/^(BY|:|-)$/i.test(nextItem)) continue;
+            if (/^(DATE|REV|SCALE|TITLE|MARKFC|ISO|SHIP|DIVISION|SYSTEM|SITE|SPEC|PALLET)$/i.test(nextItem)) break;
+            if (/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(nextItem)) continue;
+
+            const res = resolveEngineerFromDrawnCode(nextItem);
+            if (res.engineer) {
+              detected = res;
+              break;
+            }
+          }
+          if (detected.engineer) break;
+        }
+      }
+    }
+
+    // Strategy 4: High confidence scan for known engineer codes in the drawing text
+    if (!detected.engineer) {
+      const knownAbbrs = [
+        'N.D.D.', 'N.D.D', 'NDD', 'DuyND',
+        'T.Q.', 'T.Q', 'TQ', 'QuocT',
+        'HungNT', 'N.T.H.', 'N.T.H', 'NTH',
+        'KhoiPT', 'P.T.K.', 'P.T.K', 'PTK',
+        'HuyNV', 'N.V.H.', 'N.V.H', 'NVH',
+        'DuyNT', 'N.T.D.', 'N.T.D', 'NTD',
+        'TrangLT', 'L.T.T.T.', 'L.T.T.T', 'LTTT', 'TrangLTT',
+        'TVC', 'T.V.C.', 'T.V.C', 'Chuyen',
+        'NDH', 'N.D.H.', 'N.D.H', 'HopND',
+        'DDH', 'D.D.H.', 'D.D.H', 'HoangDD',
+        'ThinhNH', 'N.H.T.', 'N.H.T', 'NHT',
+        'TuatHT', 'H.T.T.', 'H.T.T', 'HTT',
+        'ChauL', 'L.C.', 'L.C', 'LC',
+        'BonTM', 'T.M.B.', 'T.M.B', 'TMB',
+        'ThaoNV', 'N.V.T.', 'N.V.T', 'NVT',
+        'PhatNH', 'N.H.P.', 'N.H.P', 'NHP',
+        'AnhNV', 'N.V.A.', 'N.V.A', 'NVA',
+        'BichTTN', 'T.T.N.B.', 'T.T.N.B', 'TTNB',
+        'Toan', 'NQT', 'VinhLQ', 'LQV', 'HuyTD', 'TDH', 'KienNV', 'NVK', 'ThangHM', 'HMT'
+      ];
+
+      for (const abbr of knownAbbrs) {
+        const regex = new RegExp(`\\b${abbr.replace(/\./g, '\\.')}\\b`, 'i');
+        if (regex.test(compactText)) {
+          const res = resolveEngineerFromDrawnCode(abbr);
+          if (res.engineer) {
+            detected = res;
+            break;
+          }
+        }
+      }
+    }
+
+    if (detected.engineer) {
+      return {
+        code: detected.code,
+        engineer: detected.engineer,
+        autoDetected: true,
+        status: 'detected'
+      };
+    }
+
+    return {
+      code: detected.code || '',
+      engineer: null,
+      autoDetected: false,
+      status: 'unrecognized'
+    };
+  } catch (err) {
+    console.warn('parseDrawnFromPage error:', err);
+    return {
+      code: '',
+      engineer: null,
+      autoDetected: false,
+      status: 'unrecognized'
+    };
+  }
+}
+
 export const DrawingReviewWorkspace: React.FC = () => {
   const { user } = useAuth();
   const { selectedProject } = useProject();
   const { addNotification } = useNotifications();
 
   // Engineers list
-  const engineers = DEFAULT_DIRECTORY_USERS.filter(u => u.role !== 'viewer');
+  const engineers = VARD_ENGINEERS;
 
-  // Helper to resolve an engineer profile from any detected DRAWN string
-  const resolveEngineerFromDrawn = useCallback((code: string): { code: string; engineer: UserProfile | null } => {
-    if (!code || !code.trim()) {
-      return { code: '', engineer: null };
-    }
+  // Helper callback for backwards compatibility
+  const resolveEngineerFromDrawn = useCallback((code: string) => {
+    return resolveEngineerFromDrawnCode(code);
+  }, []);
 
-    // Clean prefix like "BY:" or trailing punctuation
-    let candidate = code.trim().replace(/^BY[:\s]+/i, '').replace(/[:;,.]+$/, '').trim();
-    if (!candidate || candidate.toUpperCase() === 'BY') {
-      return { code: '', engineer: null };
-    }
-
-    // 1. Direct dictionary lookup
-    const directEmail = PIC_ABBREVIATIONS[candidate] || 
-                        PIC_ABBREVIATIONS[candidate.toUpperCase()] || 
-                        PIC_ABBREVIATIONS[candidate.replace(/\./g, '')];
-
-    if (directEmail) {
-      const match = engineers.find(e => e.email.toLowerCase() === directEmail.toLowerCase());
-      if (match) return { code: candidate, engineer: match };
-    }
-
-    // 2. Cleaned alphanumeric lookup
-    const norm = candidate.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    for (const [key, em] of Object.entries(PIC_ABBREVIATIONS)) {
-      const normKey = key.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      if (normKey && normKey === norm) {
-        const match = engineers.find(e => e.email.toLowerCase() === em.toLowerCase());
-        if (match) return { code: candidate, engineer: match };
-      }
-    }
-
-    // 3. Match against Vietnamese name or email username
-    const stripAccents = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-    const unaccented = stripAccents(candidate);
-
-    const matchByName = engineers.find(e => {
-      const normName = stripAccents(e.name);
-      const emailPrefix = e.email.split('@')[0].toLowerCase().replace(/\./g, ' ');
-      return normName.includes(unaccented) || emailPrefix.includes(unaccented);
-    });
-    if (matchByName) return { code: candidate, engineer: matchByName };
-
-    // 4. Initials match (e.g. "Nguyen Tran Hung" -> "NTH")
-    for (const eng of engineers) {
-      const words = stripAccents(eng.name).split(/\s+/).filter(Boolean);
-      const initials = words.map(w => w[0]).join('').toUpperCase();
-      if (initials === norm) {
-        return { code: candidate, engineer: eng };
-      }
-    }
-
-    // Return recognized code string without fabricating an engineer profile
-    return { code: candidate, engineer: null };
-  }, [engineers]);
-
-  // PDF Document State
+  // PDF & DXF Document State
   const [pdfDoc, setPdfDoc] = useState<any | null>(null);
+  const [dxfData, setDxfData] = useState<DxfData | null>(null);
+  const [fileType, setFileType] = useState<'pdf' | 'dxf' | null>(null);
+  const [isExporting, setIsExporting] = useState<'pdf' | 'dwg' | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string>('');
   const [totalPages, setTotalPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -339,6 +512,8 @@ export const DrawingReviewWorkspace: React.FC = () => {
   const loadPdfSource = useCallback(async (source: ArrayBuffer | Uint8Array | string, fileName: string) => {
     setIsLoadingPdf(true);
     setRenderError(null);
+    setDxfData(null);
+    setFileType('pdf');
     pageDrawnMapRef.current = {};
     setCurrentDrawn({
       code: '',
@@ -357,8 +532,25 @@ export const DrawingReviewWorkspace: React.FC = () => {
       setPdfFileName(fileName);
       setTotalPages(loadedDoc.numPages);
       setCurrentPage(1);
-      setBannerMessage(`Đã mở bản vẽ: ${fileName} (${loadedDoc.numPages} trang).`);
-      setTimeout(() => setBannerMessage(null), 3500);
+
+      // Immediately parse DRAWN for Page 1 on load without waiting
+      try {
+        const page1 = await loadedDoc.getPage(1);
+        const drawn1 = await parseDrawnFromPage(page1);
+        pageDrawnMapRef.current[1] = drawn1;
+        setCurrentDrawn(drawn1);
+
+        if (drawn1.engineer) {
+          setBannerMessage(`Đã mở bản vẽ: ${fileName} (${loadedDoc.numPages} trang). Nhận diện DRAWN: ${drawn1.code} (${drawn1.engineer.name})`);
+        } else {
+          setBannerMessage(`Đã mở bản vẽ: ${fileName} (${loadedDoc.numPages} trang).`);
+        }
+      } catch (parseErr) {
+        console.warn('Immediate parse error on Page 1:', parseErr);
+        setBannerMessage(`Đã mở bản vẽ: ${fileName} (${loadedDoc.numPages} trang).`);
+      }
+
+      setTimeout(() => setBannerMessage(null), 4000);
     } catch (err: any) {
       console.error('Failed to load PDF:', err);
       setRenderError(`Không thể đọc file PDF: ${err?.message || 'Định dạng không hợp lệ'}`);
@@ -367,13 +559,62 @@ export const DrawingReviewWorkspace: React.FC = () => {
     }
   }, []);
 
-  // Handle User Uploading PDF file
+  // Load CAD DXF Source
+  const loadDxfSource = useCallback(async (source: File | string, customName?: string) => {
+    setIsLoadingPdf(true);
+    setRenderError(null);
+    setPdfDoc(null);
+    pageDrawnMapRef.current = {};
+
+    try {
+      let textContent = '';
+      let fileName = customName || 'Drawing.dxf';
+
+      if (typeof source === 'string') {
+        const res = await fetch(source);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Không tìm thấy file mẫu`);
+        textContent = await res.text();
+      } else {
+        fileName = source.name;
+        textContent = await source.text();
+      }
+
+      const parsed = parseDxf(textContent);
+      setDxfData(parsed);
+      setFileType('dxf');
+      setPdfFileName(fileName);
+      setTotalPages(1);
+      setCurrentPage(1);
+
+      pageDrawnMapRef.current[1] = parsed.drawnResult;
+      setCurrentDrawn(parsed.drawnResult);
+
+      if (parsed.drawnResult.engineer) {
+        setBannerMessage(`Đã mở bản vẽ CAD DXF: ${fileName} (${parsed.entities.length} đối tượng CAD). Nhận diện DRAWN: ${parsed.drawnResult.code} (${parsed.drawnResult.engineer.name})`);
+      } else {
+        setBannerMessage(`Đã mở bản vẽ CAD DXF: ${fileName} (${parsed.entities.length} đối tượng CAD).`);
+      }
+      setTimeout(() => setBannerMessage(null), 4500);
+    } catch (err: any) {
+      console.error('Failed to load DXF:', err);
+      setRenderError(`Không thể đọc file DXF: ${err?.message || 'Định dạng không hợp lệ'}`);
+    } finally {
+      setIsLoadingPdf(false);
+    }
+  }, []);
+
+  // Handle User Uploading PDF or DXF file
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const buffer = await file.arrayBuffer();
-      await loadPdfSource(buffer, file.name);
+      const isDxf = file.name.toLowerCase().endsWith('.dxf');
+      if (isDxf) {
+        await loadDxfSource(file);
+      } else {
+        const buffer = await file.arrayBuffer();
+        await loadPdfSource(buffer, file.name);
+      }
       e.target.value = '';
     } catch (err: any) {
       setRenderError(`Lỗi đọc file: ${err?.message}`);
@@ -385,145 +626,269 @@ export const DrawingReviewWorkspace: React.FC = () => {
     loadPdfSource('./sample-drawing.pdf', 'NB994 Piping dwg plan - W51.pdf');
   };
 
-  // Extract DRAWN code on page change (isolated, multi-strategy, no canvas loop)
+  // Load sample CAD DXF
+  const handleLoadSampleDxf = () => {
+    loadDxfSource('./sample-piping-drawing.dxf', 'Piping-Isometric-N987.dxf');
+  };
+
+  // Export Branch 1: Export to High-Fidelity PDF with Markups and Summary Table
+  const handleExportPdf = async () => {
+    if (!dxfData && !pdfDoc) return;
+    setIsExporting('pdf');
+    try {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('Không tìm thấy canvas bản vẽ để xuất');
+
+      let imgData = '';
+      try {
+        imgData = canvas.toDataURL('image/jpeg', 0.95);
+      } catch (e) {
+        imgData = canvas.toDataURL('image/png');
+      }
+
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a3',
+      });
+
+      const pdfW = pdf.internal.pageSize.getWidth(); // 420mm
+      const pdfH = pdf.internal.pageSize.getHeight(); // 297mm
+
+      // Header Banner
+      pdf.setFillColor(15, 23, 42);
+      pdf.rect(0, 0, pdfW, 15, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(11);
+      pdf.text(`VARD PIPING DESIGN REVIEW - ${pdfFileName || 'Drawing'}`, 15, 10);
+      pdf.setFontSize(8);
+      pdf.setTextColor(203, 213, 225);
+      pdf.text(`DỰ ÁN: ${selectedProject.name} | DRAWN: ${currentDrawn.code || 'N/A'} (${currentDrawn.engineer?.name || 'VARD'}) | NGÀY: ${new Date().toLocaleDateString()}`, 200, 10);
+
+      // Scale drawing to fit without any distortion
+      const maxW = pdfW - 20; // 400mm
+      const maxH = pdfH - 32; // 265mm
+      const canvasRatio = canvas.width / Math.max(1, canvas.height);
+      let imgW = maxW;
+      let imgH = imgW / canvasRatio;
+
+      if (imgH > maxH) {
+        imgH = maxH;
+        imgW = imgH * canvasRatio;
+      }
+
+      const imgX = 10 + (maxW - imgW) / 2;
+      const imgY = 18 + (maxH - imgH) / 2;
+
+      pdf.addImage(imgData, 'JPEG', imgX, imgY, imgW, imgH);
+
+      // Stamp Red Revision Pins at exact canvas locations
+      pagePins.forEach((pin, idx) => {
+        if (!isFinite(pin.x) || !isFinite(pin.y)) return;
+        const pinX = imgX + (pin.x / 100) * imgW;
+        const pinY = imgY + (pin.y / 100) * imgH;
+
+        // Pin circle
+        pdf.setFillColor(239, 68, 68);
+        pdf.setDrawColor(185, 28, 28);
+        pdf.circle(pinX, pinY, 3, 'FD');
+
+        // Pin number
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(7);
+        pdf.text(String(idx + 1), pinX, pinY + 0.9, { align: 'center' });
+      });
+
+      // If pagePins exist, add Page 2 with complete review log
+      if (pagePins.length > 0) {
+        pdf.addPage('a3', 'landscape');
+        
+        // Header
+        pdf.setFillColor(15, 23, 42);
+        pdf.rect(0, 0, pdfW, 18, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(13);
+        pdf.text(`VARD PIPING ENGINEERING - BẢNG TỔNG HỢP GHI CHÚ REVIEW BẢN VẼ`, 15, 12);
+
+        pdf.setFontSize(9);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(`Bản vẽ: ${pdfFileName} | Trang: ${currentPage}/${totalPages} | Người vẽ (DRAWN): ${currentDrawn.code || 'N/A'} (${currentDrawn.engineer?.name || 'VARD'})`, 15, 26);
+
+        // Table Header
+        pdf.setFillColor(241, 245, 249);
+        pdf.rect(15, 32, pdfW - 30, 9, 'F');
+        pdf.setTextColor(30, 41, 59);
+        pdf.setFontSize(8);
+        pdf.text('#', 18, 38);
+        pdf.text('TIÊU ĐỀ COMMENT', 28, 38);
+        pdf.text('NỘI DUNG CHI TIẾT', 125, 38);
+        pdf.text('ƯU TIÊN', 255, 38);
+        pdf.text('TRẠNG THÁI', 285, 38);
+        pdf.text('KỸ SƯ PHỤ TRÁCH (GỬI THÔNG BÁO)', 320, 38);
+
+        let rowY = 46;
+        pagePins.forEach((p, i) => {
+          if (rowY > pdfH - 20) {
+            pdf.addPage('a3', 'landscape');
+            rowY = 25;
+          }
+          pdf.setDrawColor(226, 232, 240);
+          pdf.line(15, rowY + 3, pdfW - 15, rowY + 3);
+
+          pdf.setTextColor(239, 68, 68);
+          pdf.text(`[${i + 1}]`, 18, rowY);
+          pdf.setTextColor(15, 23, 42);
+          pdf.text(String(p.title || '').substring(0, 48), 28, rowY);
+          pdf.setTextColor(71, 85, 105);
+          pdf.text(String(p.desc || 'Không có mô tả chi tiết').substring(0, 65), 125, rowY);
+          
+          if (p.priority === 'high') pdf.setTextColor(220, 38, 38);
+          else if (p.priority === 'medium') pdf.setTextColor(217, 119, 6);
+          else pdf.setTextColor(37, 99, 235);
+          pdf.text(p.priority.toUpperCase(), 255, rowY);
+
+          pdf.setTextColor(15, 23, 42);
+          pdf.text(p.status.toUpperCase(), 285, rowY);
+          pdf.text(`${p.assigneeName || 'VARD'}`, 320, rowY);
+
+          rowY += 10;
+        });
+      }
+
+      const cleanName = (pdfFileName || 'drawing').replace(/\.[^/.]+$/, '');
+      pdf.save(`${cleanName}_reviewed_p${currentPage}.pdf`);
+      setBannerMessage(`✅ Đã xuất bản vẽ PDF thành công (${pagePins.length} vị trí comment kèm bảng ghi chú)!`);
+      setTimeout(() => setBannerMessage(null), 4500);
+    } catch (err: any) {
+      console.error('Export PDF error:', err);
+      // Fallback for DXF if canvas capture failed
+      if (dxfData) {
+        try {
+          await exportDxfToPdf(dxfData, pagePins, pdfFileName, selectedProject.name);
+          setBannerMessage(`✅ Đã xuất bản vẽ PDF thành công!`);
+          setTimeout(() => setBannerMessage(null), 4000);
+          return;
+        } catch (fbErr: any) {
+          setRenderError(`Lỗi khi xuất PDF: ${fbErr?.message || err?.message}`);
+        }
+      } else {
+        setRenderError(`Lỗi khi xuất PDF: ${err?.message}`);
+      }
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
+  // Export Branch 2: Export DWG-Ready (AutoCAD-compatible CAD file with VARD_MARKUP_REVIEW layer)
+  const handleExportDwgReady = () => {
+    setIsExporting('dwg');
+    try {
+      const cleanName = (pdfFileName || 'drawing').replace(/\.[^/.]+$/, '');
+
+      if (dxfData) {
+        const modifiedDxf = exportDxfWithMarkups(dxfData.rawContent, pagePins, dxfData);
+        downloadDxfFile(modifiedDxf, `${cleanName}_REVIEWED_DWG_READY.dxf`);
+        setBannerMessage(`✅ Đã xuất file CAD (DWG-Ready) thành công! File chứa layer VARD_MARKUP_REVIEW chuẩn AutoCAD. Mở trong AutoCAD và bấm Save As sang .DWG.`);
+      } else {
+        // PDF Drawing: Generate valid AutoCAD DXF with drawing borders, title block and review pins
+        const generatedDxf = generateCadDxfFromPdfPins(
+          pagePins, 
+          pdfFileName || 'Piping_Drawing', 
+          currentDrawn.code || 'VARD',
+          currentDrawn.engineer?.name || 'VARD Engineer'
+        );
+        downloadDxfFile(generatedDxf, `${cleanName}_CAD_MARKUPS.dxf`);
+        setBannerMessage(`✅ Đã xuất file CAD (DWG-Ready) chứa các tọa độ markup review từ bản vẽ PDF! Mở trong AutoCAD/BricsCAD để lưu sang .DWG.`);
+      }
+      setTimeout(() => setBannerMessage(null), 6000);
+    } catch (err: any) {
+      console.error('Export CAD error:', err);
+      setRenderError(`Lỗi khi xuất file CAD: ${err?.message}`);
+    } finally {
+      setIsExporting(null);
+    }
+  };
+
+  // Extract DRAWN code on page change (isolated, stable dependencies, no canvas loop)
   useEffect(() => {
     if (!pdfDoc) return;
     let isCancelled = false;
 
-    const extractDrawnFromCurrentPage = async () => {
-      // Check cache first for this specific page
-      if (pageDrawnMapRef.current[currentPage]) {
-        setCurrentDrawn(pageDrawnMapRef.current[currentPage]);
-        return;
-      }
+    // Check cache first for this specific page
+    if (pageDrawnMapRef.current[currentPage]) {
+      setCurrentDrawn(pageDrawnMapRef.current[currentPage]);
+      return;
+    }
 
-      setCurrentDrawn({
+    pdfDoc.getPage(currentPage).then(async (page: any) => {
+      if (isCancelled) return;
+      const info = await parseDrawnFromPage(page);
+      if (isCancelled) return;
+      pageDrawnMapRef.current[currentPage] = info;
+      setCurrentDrawn(info);
+    }).catch((err: any) => {
+      console.warn('Page text extraction error:', err);
+      const fallbackInfo: DrawnDetection = {
         code: '',
         engineer: null,
         autoDetected: false,
-        status: 'scanning'
-      });
-
-      try {
-        const page = await pdfDoc.getPage(currentPage);
-        if (isCancelled) return;
-        const textContent = await page.getTextContent();
-        const rawItems: string[] = (textContent.items || [])
-          .map((it: any) => (typeof it.str === 'string' ? it.str.trim() : ''))
-          .filter((s: string) => s.length > 0);
-
-        const joinedText = rawItems.join(' ');
-        let detected: { code: string; engineer: UserProfile | null } = { code: '', engineer: null };
-
-        // Strategy 1: Explicit regex targeting DRAWN / DWN / DESIGNED / PIC / DRAWER
-        // (?:BY)? avoids capturing the word "BY" into group 1
-        const regexPatterns = [
-          /\b(?:DRAWN|DWN|DESIGNED|DES|DRAWER|PIC)\s*(?:BY)?\s*[:\s\-]\s*([A-Za-z0-9._-]+(?:\s+[A-Za-z0-9._-]+){0,2})/i,
-          /\bDRAWN\s*[:\s]\s*([A-Za-z0-9._-]+)/i,
-          /\bDWN\s*[:\s]\s*([A-Za-z0-9._-]+)/i,
-          /\bPIC\s*[:\s]\s*([A-Za-z0-9._-]+)/i
-        ];
-
-        for (const pattern of regexPatterns) {
-          const match = joinedText.match(pattern);
-          if (match && match[1]) {
-            const rawToken = match[1].trim();
-            // Filter out noise, labels or dates
-            if (rawToken && 
-                !/^(BY|DATE|REV|SCALE|TITLE|DWG|SHEET|MARKFC|ISO|SHIP)$/i.test(rawToken) && 
-                !/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(rawToken)) {
-              const res = resolveEngineerFromDrawn(rawToken);
-              if (res.engineer) {
-                detected = res;
-                break;
-              } else if (!detected.code && res.code) {
-                detected = res;
-              }
-            }
-          }
-        }
-
-        // Strategy 2: Sequential item scan across CAD title block text elements
-        if (!detected.engineer) {
-          for (let i = 0; i < rawItems.length; i++) {
-            const item = rawItems[i];
-            if (/\b(DRAWN|DWN|DESIGNED|DRAWER|PIC)\b/i.test(item)) {
-              // Check inline in same item (e.g. "DRAWN: HungNT" or "DRAWN: T.Q.")
-              const inlineMatch = item.match(/\b(?:DRAWN|DWN|DESIGNED|PIC)\s*(?:BY)?\s*[:\s\-]\s*([A-Za-z0-9._-]+)/i);
-              if (inlineMatch?.[1]) {
-                const res = resolveEngineerFromDrawn(inlineMatch[1]);
-                if (res.engineer) {
-                  detected = res;
-                  break;
-                }
-              }
-
-              // Check subsequent 1-3 items
-              for (let j = 1; j <= 3 && i + j < rawItems.length; j++) {
-                const nextItem = rawItems[i + j].trim();
-                if (/^(BY|:|-)$/i.test(nextItem)) continue;
-                if (/^(DATE|REV|SCALE|TITLE|MARKFC|ISO|SHIP|DIVISION|SYSTEM|SITE|SPEC|PALLET)$/i.test(nextItem)) break;
-                if (/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(nextItem)) continue; // skip date
-
-                const res = resolveEngineerFromDrawn(nextItem);
-                if (res.engineer) {
-                  detected = res;
-                  break;
-                }
-              }
-              if (detected.engineer) break;
-            }
-          }
-        }
-
-        // Strategy 3: Proximity match with known engineer abbreviations in title block
-        if (!detected.engineer) {
-          const hasTitleBlock = /\b(SHIP|SPEC|DATE|PALLET|MARKFC|ISO|VARD|DRAWING|SYSTEM|TITLE)\b/i.test(joinedText);
-          if (hasTitleBlock) {
-            for (const item of rawItems) {
-              const cleanItem = item.replace(/[:;,]/g, '').trim();
-              if (cleanItem && PIC_ABBREVIATIONS[cleanItem]) {
-                const res = resolveEngineerFromDrawn(cleanItem);
-                if (res.engineer) {
-                  detected = res;
-                  break;
-                }
-              }
-            }
-          }
-        }
-
-        const finalInfo: DrawnDetection = {
-          code: detected.code || (detected.engineer ? detected.engineer.name : ''),
-          engineer: detected.engineer,
-          autoDetected: Boolean(detected.engineer),
-          status: detected.engineer ? 'detected' : 'unrecognized'
-        };
-
-        pageDrawnMapRef.current[currentPage] = finalInfo;
-        if (!isCancelled) {
-          setCurrentDrawn(finalInfo);
-        }
-      } catch (err) {
-        console.warn('Text extraction error on page', currentPage, err);
-        const fallbackInfo: DrawnDetection = {
-          code: '',
-          engineer: null,
-          autoDetected: false,
-          status: 'unrecognized'
-        };
+        status: 'unrecognized'
+      };
+      if (!isCancelled) {
         pageDrawnMapRef.current[currentPage] = fallbackInfo;
-        if (!isCancelled) setCurrentDrawn(fallbackInfo);
+        setCurrentDrawn(fallbackInfo);
       }
-    };
+    });
 
-    extractDrawnFromCurrentPage();
-    return () => { isCancelled = true; };
-  }, [pdfDoc, currentPage, resolveEngineerFromDrawn]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [pdfDoc, currentPage]);
+
+  // Render DXF CAD Drawing onto Canvas
+  useEffect(() => {
+    if (!dxfData || !canvasRef.current || fileType !== 'dxf') return;
+
+    try {
+      setIsRenderingPage(true);
+      const canvas = canvasRef.current;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const scale = Math.min(Math.max(0.4, zoom / 100), 2.2);
+
+      const widthSpan = Math.max(1, dxfData.bbox.width);
+      const heightSpan = Math.max(1, dxfData.bbox.height);
+      const aspect = widthSpan / heightSpan;
+
+      const baseWidth = 1400;
+      const cssW = Math.round(baseWidth * scale);
+      const validAspect = (aspect > 0.2 && aspect < 5) ? aspect : 1.414;
+      const cssH = Math.round(cssW / validAspect);
+
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      canvas.style.width = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+
+      if (overlayRef.current) {
+        overlayRef.current.style.width = `${cssW}px`;
+        overlayRef.current.style.height = `${cssH}px`;
+      }
+
+      renderDxfToCanvas(dxfData, canvas, {
+        backgroundColor: '#07111e',
+        lineColor: '#38BDF8',
+      });
+    } catch (err: any) {
+      console.error('DXF Canvas Render error:', err);
+      setRenderError(`Lỗi hiển thị bản vẽ DXF: ${err?.message}`);
+    } finally {
+      setIsRenderingPage(false);
+    }
+  }, [dxfData, zoom, fileType]);
 
   // Render PDF Page with debounce and strict memory protection
   useEffect(() => {
-    if (!pdfDoc || !canvasRef.current) return;
+    if (!pdfDoc || !canvasRef.current || fileType !== 'pdf') return;
     let isCancelled = false;
 
     if (renderTaskRef.current) {
@@ -583,7 +948,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, currentPage, zoom]);
+  }, [pdfDoc, currentPage, zoom, fileType]);
 
   // Click on Canvas/Overlay to place a new pin
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -734,6 +1099,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
   // Current page pins and filtered list
   const pagePins = pins.filter(p => p.page === currentPage);
   const visiblePins = pagePins.filter(p => filterStatus === 'all' || p.status === filterStatus);
+  const hasDrawing = Boolean(pdfDoc || dxfData);
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] w-full bg-[#0B1F33] text-slate-100 overflow-hidden font-sans">
@@ -742,41 +1108,86 @@ export const DrawingReviewWorkspace: React.FC = () => {
       <div className="h-14 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-md">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-            <FileText className="w-5 h-5" />
+            {fileType === 'dxf' ? <FileCode className="w-5 h-5 text-cyan-400" /> : <FileText className="w-5 h-5" />}
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-sm text-white font-sans truncate max-w-[320px]">
-                {pdfFileName || 'Drawing Review & PDF Markup Workspace'}
+              <span className="font-bold text-sm text-white font-sans truncate max-w-[280px]">
+                {pdfFileName || 'Drawing Review Workspace (PDF & CAD DXF)'}
               </span>
+              {fileType && (
+                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                  fileType === 'dxf' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                }`}>
+                  {fileType === 'dxf' ? 'CAD DXF' : 'PDF'}
+                </span>
+              )}
               <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[10px] font-mono">
                 {selectedProject.code}
               </span>
             </div>
             <p className="text-[11px] font-mono text-slate-400">
-              {totalPages > 0 
-                ? `Trang ${currentPage} / ${totalPages} · ${pagePins.length} comment trên trang này` 
-                : 'Chưa có file PDF nào được mở'}
+              {hasDrawing 
+                ? `${fileType === 'dxf' ? 'Bản vẽ CAD Model Space' : `Trang ${currentPage} / ${totalPages}`} · ${pagePins.length} comment trên bản vẽ` 
+                : 'Hỗ trợ định dạng file PDF bản vẽ & file CAD (.dxf)'}
             </p>
           </div>
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2.5">
-          <label className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow cursor-pointer transition-colors">
-            <Upload className="w-4 h-4" />
-            <span>Tải Lên File PDF Bản Vẽ</span>
-            <input type="file" accept=".pdf" onChange={handleFileUpload} className="hidden" />
+        <div className="flex items-center gap-2">
+          {/* Upload Button */}
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow cursor-pointer transition-colors">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Tải Lên PDF / DXF</span>
+            <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
           </label>
 
-          {!pdfDoc && (
-            <button
-              onClick={handleLoadSamplePdf}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-mono transition-colors cursor-pointer"
-            >
-              <FolderOpen className="w-4 h-4" />
-              <span>Mở Bản Vẽ Mẫu NB994 (5 Trang)</span>
-            </button>
+          {/* Export Branches when Drawing is open */}
+          {hasDrawing && (
+            <>
+              <button
+                onClick={handleExportPdf}
+                disabled={isExporting !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-colors cursor-pointer disabled:opacity-50"
+                title="Xuất bản vẽ ra file PDF chuẩn A3 kèm toàn bộ comment markup và bảng ghi chú"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isExporting === 'pdf' ? 'Đang Xuất PDF...' : '📥 Xuất PDF'}</span>
+              </button>
+
+              <button
+                onClick={handleExportDwgReady}
+                disabled={isExporting !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs shadow transition-colors cursor-pointer disabled:opacity-50"
+                title="Xuất file CAD tích hợp layer VARD_MARKUP_REVIEW. Mở trong AutoCAD và bấm Save As sang .DWG"
+              >
+                <FileCode className="w-3.5 h-3.5" />
+                <span>{isExporting === 'dwg' ? 'Đang Xuất CAD...' : '📐 Xuất DWG (CAD)'}</span>
+              </button>
+            </>
+          )}
+
+          {/* Sample Drawing Buttons when no drawing loaded */}
+          {!hasDrawing && (
+            <>
+              <button
+                onClick={handleLoadSampleDxf}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/80 text-xs font-mono transition-colors cursor-pointer"
+                title="Mở bản vẽ mẫu CAD DXF (DRAWN: N.D.D.)"
+              >
+                <FileCode className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Mẫu CAD DXF (N.D.D.)</span>
+              </button>
+              <button
+                onClick={handleLoadSamplePdf}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono transition-colors cursor-pointer"
+                title="Mở bản vẽ PDF mẫu NB994 (DRAWN: T.Q.)"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+                <span>Mẫu PDF (T.Q.)</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -809,43 +1220,50 @@ export const DrawingReviewWorkspace: React.FC = () => {
         <div className="flex-1 flex flex-col bg-slate-950 relative min-h-0 overflow-hidden">
           
           {/* Canvas Sub-toolbar */}
-          {pdfDoc && (
+          {hasDrawing && (
             <div className="h-11 bg-slate-900/90 border-b border-slate-800/80 px-4 flex items-center justify-between shrink-0 z-10 flex-wrap gap-2">
               
-              {/* Page Navigator */}
-              <div className="flex items-center gap-2 font-mono text-xs">
-                <span className="text-slate-400">Trang Bản Vẽ:</span>
-                <button 
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
-                  className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-30 cursor-pointer"
-                  title="Trang trước"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <div className="flex items-center gap-1 font-bold">
-                  <select 
-                    value={currentPage} 
-                    onChange={e => setCurrentPage(Number(e.target.value))}
-                    className="bg-slate-950 text-amber-400 border border-slate-800 px-2 py-0.5 rounded font-mono text-xs cursor-pointer"
+              {/* Page Navigator for PDF or CAD Viewport Indicator for DXF */}
+              {fileType === 'pdf' ? (
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span className="text-slate-400">Trang Bản Vẽ:</span>
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage <= 1}
+                    className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-30 cursor-pointer"
+                    title="Trang trước"
                   >
-                    {Array.from({ length: totalPages }).map((_, i) => (
-                      <option key={i + 1} value={i + 1}>
-                        Trang {i + 1} ({pins.filter(p => p.page === i + 1).length} comment)
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-slate-500">/ {totalPages}</span>
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <div className="flex items-center gap-1 font-bold">
+                    <select 
+                      value={currentPage} 
+                      onChange={e => setCurrentPage(Number(e.target.value))}
+                      className="bg-slate-950 text-amber-400 border border-slate-800 px-2 py-0.5 rounded font-mono text-xs cursor-pointer"
+                    >
+                      {Array.from({ length: totalPages }).map((_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          Trang {i + 1} ({pins.filter(p => p.page === i + 1).length} comment)
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-slate-500">/ {totalPages}</span>
+                  </div>
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-30 cursor-pointer"
+                    title="Trang sau"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                  className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-30 cursor-pointer"
-                  title="Trang sau"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+              ) : (
+                <div className="flex items-center gap-2 font-mono text-xs text-cyan-300 bg-cyan-950/40 px-2.5 py-1 rounded border border-cyan-800/50">
+                  <FileCode className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="font-semibold">CAD Model Space ({dxfData?.entities.length || 0} entities)</span>
+                </div>
+              )}
 
               {/* DRAWN BY DETECTED BADGE & SELECTOR */}
               <div className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-mono border transition-all ${
@@ -962,55 +1380,63 @@ export const DrawingReviewWorkspace: React.FC = () => {
             {isLoadingPdf && (
               <div className="flex flex-col items-center gap-3 text-cyan-400 font-mono text-xs">
                 <div className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
-                <span>Đang mở bản vẽ PDF...</span>
+                <span>{fileType === 'dxf' ? 'Đang đọc và dựng bản vẽ CAD DXF...' : 'Đang mở bản vẽ PDF...'}</span>
               </div>
             )}
 
-            {!pdfDoc && !isLoadingPdf && (
+            {!hasDrawing && !isLoadingPdf && (
               <div className="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-8 text-center space-y-4 shadow-2xl">
                 <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
                   <Upload className="w-7 h-7" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white mb-1">Tải Lên File PDF Để Bắt Đầu Review Bản Vẽ</h3>
+                  <h3 className="text-base font-bold text-white mb-1">Tải Lên Bản Vẽ PDF Hoặc CAD DXF</h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Hệ thống sẽ tự động nhận diện chữ <strong>DRAWN (Người vẽ bản vẽ)</strong> trong khung tên bản vẽ. Mọi comment bạn thêm vào sẽ tự động gửi thông báo trực tiếp đến kỹ sư đó.
+                    Hỗ trợ mở trực tiếp file PDF và file CAD (.dxf). Tự động nhận diện chữ <strong>DRAWN (Người vẽ)</strong> trong khung tên để gửi thông báo. Sau review, bạn có thể xuất ra file PDF kèm ghi chú hoặc xuất sang file CAD (DWG-Ready).
                   </p>
                 </div>
 
                 <div className="pt-2 flex flex-col gap-2.5">
                   <label className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-colors">
                     <Upload className="w-4 h-4" />
-                    <span>Chọn File PDF Từ Máy Tính</span>
-                    <input type="file" accept=".pdf" onChange={handleFileUpload} className="hidden" />
+                    <span>Chọn File PDF hoặc DXF Từ Máy</span>
+                    <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
                   </label>
 
                   <button
-                    onClick={handleLoadSamplePdf}
-                    className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 font-mono text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                    onClick={handleLoadSampleDxf}
+                    className="w-full py-2.5 px-4 rounded-xl bg-cyan-950/70 hover:bg-cyan-900/80 text-cyan-300 border border-cyan-700/60 font-mono text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
                   >
-                    <FolderOpen className="w-4 h-4" />
-                    <span>Mở Bản Vẽ Mẫu NB994 (DRAWN: T.Q. - Trần Quốc)</span>
+                    <FileCode className="w-4 h-4 text-cyan-400" />
+                    <span>Mở Bản Vẽ Mẫu CAD DXF (DRAWN: N.D.D. - Nguyễn Danh Duy)</span>
+                  </button>
+
+                  <button
+                    onClick={handleLoadSamplePdf}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <FolderOpen className="w-4 h-4 text-amber-400" />
+                    <span>Mở Bản Vẽ Mẫu PDF NB994 (DRAWN: T.Q. - Trần Quốc)</span>
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Real PDF Canvas and Interactive Annotation Overlay */}
+            {/* Real PDF / DXF Canvas and Interactive Annotation Overlay */}
             <div 
-              className={`relative shadow-2xl rounded-lg bg-white overflow-visible transition-all ${
-                pdfDoc ? 'block' : 'hidden'
+              className={`relative shadow-2xl rounded-lg ${fileType === 'dxf' ? 'bg-[#07111e]' : 'bg-white'} overflow-visible transition-all ${
+                hasDrawing ? 'block' : 'hidden'
               }`}
             >
               {isRenderingPage && (
                 <div className="absolute top-2 right-2 z-30 px-2 py-1 rounded bg-slate-900/80 text-[10px] font-mono text-cyan-300 flex items-center gap-1 shadow">
                   <div className="w-2.5 h-2.5 rounded-full border border-cyan-400 border-t-transparent animate-spin" />
-                  <span>Đang tải trang...</span>
+                  <span>Đang dựng bản vẽ...</span>
                 </div>
               )}
 
-              {/* Native PDF.js Canvas */}
-              <canvas ref={canvasRef} className="block rounded-lg shadow-inner bg-white" />
+              {/* Native PDF.js or DXF Canvas */}
+              <canvas ref={canvasRef} className={`block rounded-lg shadow-inner ${fileType === 'dxf' ? 'bg-[#07111e]' : 'bg-white'}`} />
 
               {/* Interactive Pin Markup Overlay */}
               <div

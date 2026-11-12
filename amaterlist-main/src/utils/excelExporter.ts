@@ -15,8 +15,12 @@ function downloadBlob(buffer: ArrayBuffer, fileName: string) {
   a.download = fileName;
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    try {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {}
+  }, 1500);
 }
 
 /**

@@ -580,8 +580,12 @@ export const IsoDrawingManagerPage: React.FC = () => {
       a.download = fileName;
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        try {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } catch (e) {}
+      }, 1500);
 
       showToast(`Đã xuất Excel: ${fileName}`);
     } catch (err) {

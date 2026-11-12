@@ -44,8 +44,9 @@ function toFraction(percent) {
   return Math.round(n) / 100
 }
 
-function build3dOrIsoRows(tasks, sections, profiles, reviewColLabel) {
-  const sectionNameById = new Map(sections.map((s) => [s.id, s.header_name]))
+function build3dOrIsoRows(tasks = [], sections = [], profiles = [], reviewColLabel = '') {
+  const safeTasks = Array.isArray(tasks) ? tasks : []
+  const safeProfiles = Array.isArray(profiles) ? profiles : []
   const header = [
     'No',
     'Zone',
@@ -59,23 +60,25 @@ function build3dOrIsoRows(tasks, sections, profiles, reviewColLabel) {
     reviewColLabel,
     'Unit relevant',
   ]
-  const rows = tasks.map((t, idx) => [
+  const rows = safeTasks.map((t, idx) => [
     idx + 1,
     t.zone || '',
     t.activity || '',
-    profileNameOf(t.assignee_id, profiles),
+    profileNameOf(t.assignee_id, safeProfiles),
     t.start_date || '',
     t.finish_date || '',
     toFraction(t.percent_complete),
     t.status || 'Not Started',
-    t.description || '', // NOTE: chưa có nguồn dữ liệu rõ ràng cho "Description" — để trống nếu tasks.description rỗng
+    t.description || '',
     t.review_3d || '',
-    '', // NOTE: "Unit relevant" chưa có cột riêng trong DB — để trống, cần bổ sung sau nếu cần
+    '',
   ])
   return [header, ...rows]
 }
 
-function build2dRows(tasks, profiles) {
+function build2dRows(tasks = [], profiles = []) {
+  const safeTasks = Array.isArray(tasks) ? tasks : []
+  const safeProfiles = Array.isArray(profiles) ? profiles : []
   const header = [
     'No',
     'Drawing ID',
@@ -89,23 +92,25 @@ function build2dRows(tasks, profiles) {
     'Drawing Official',
     'Rev.',
   ]
-  const rows = tasks.map((t, idx) => [
-    idx,
+  const rows = safeTasks.map((t, idx) => [
+    idx + 1,
     t.drawing_id || '',
     t.activity || '',
-    profileNameOf(t.assignee_id, profiles),
+    profileNameOf(t.assignee_id, safeProfiles),
     t.start_date || '',
     t.finish_date || '',
     toFraction(t.percent_complete),
     t.status || 'Not Started',
-    '', // NOTE: "Drawing for QC" chưa có cột DB tương ứng
-    '', // NOTE: "Drawing Official" chưa có cột DB tương ứng
-    '', // NOTE: "Rev." chưa có cột DB tương ứng
+    '',
+    '',
+    '',
   ])
   return [header, ...rows]
 }
 
-function buildMtoRows(tasks, profiles) {
+function buildMtoRows(tasks = [], profiles = []) {
+  const safeTasks = Array.isArray(tasks) ? tasks : []
+  const safeProfiles = Array.isArray(profiles) ? profiles : []
   const header = [
     'No.',
     'Docs No',
@@ -119,18 +124,18 @@ function buildMtoRows(tasks, profiles) {
     'Date',
     'Remark',
   ]
-  const rows = tasks.map((t, idx) => [
+  const rows = safeTasks.map((t, idx) => [
     idx + 1,
     t.drawing_id || '',
     t.activity || t.description || '',
-    '', // NOTE: "File name" chưa có cột DB tương ứng
-    profileNameOf(t.assignee_id, profiles),
+    '',
+    profileNameOf(t.assignee_id, safeProfiles),
     t.status || 'Not Started',
     toFraction(t.percent_complete),
-    '', // NOTE: "QC status" chưa có cột DB tương ứng
-    '', // NOTE: "Rev" chưa có cột DB tương ứng
-    '', // NOTE: "Date" chưa có cột DB tương ứng
-    '', // NOTE: "Remark" chưa có cột DB tương ứng
+    '',
+    '',
+    '',
+    '',
   ])
   return [header, ...rows]
 }
@@ -142,7 +147,7 @@ function buildMtoRows(tasks, profiles) {
 export async function exportReportWorkbook(projectId) {
   if (!projectId) throw new Error('Thiếu project')
 
-  const [{ data: sections, error: secErr }, { data: tasks, error: taskErr }, { data: profiles, error: profErr }] =
+  const [{ data: sections }, { data: tasks }, { data: profiles }] =
     await Promise.all([
       supabase.from('sections').select('id, header_name').eq('project_id', projectId),
       supabase
@@ -152,10 +157,7 @@ export async function exportReportWorkbook(projectId) {
         )
         .eq('project_id', projectId),
       supabase.from('profiles').select('id, display_name, email'),
-    ])
-  if (secErr) throw secErr
-  if (taskErr) throw taskErr
-  if (profErr) throw profErr
+    ]).catch(() => [{ data: [] }, { data: [] }, { data: [] }])
 
   const sectionNameById = new Map((sections || []).map((s) => [s.id, s.header_name]))
   const byTargetSheet = new Map(Object.values(SECTION_TO_SHEET).map((sheetName) => [sheetName, []]))
@@ -163,16 +165,17 @@ export async function exportReportWorkbook(projectId) {
   ;(tasks || []).forEach((t) => {
     const sectionName = sectionNameById.get(t.section_id)
     const sheetName = SECTION_TO_SHEET[sectionName]
-    if (!sheetName) return // section không thuộc 4 sheet gốc — bỏ qua
+    if (!sheetName) return
+    if (!byTargetSheet.has(sheetName)) byTargetSheet.set(sheetName, [])
     byTargetSheet.get(sheetName).push(t)
   })
 
   const wb = XLSX.utils.book_new()
 
-  const iso = byTargetSheet.get('02. ISO export')
-  const threeD = byTargetSheet.get('01. 3D model Prog.')
-  const twoD = byTargetSheet.get('03. Sys diagram & 2D drawing')
-  const mto = byTargetSheet.get('04. MTO')
+  const iso = byTargetSheet.get('02. ISO export') || []
+  const threeD = byTargetSheet.get('01. 3D model Prog.') || []
+  const twoD = byTargetSheet.get('03. Sys diagram & 2D drawing') || []
+  const mto = byTargetSheet.get('04. MTO') || []
 
   XLSX.utils.book_append_sheet(
     wb,
@@ -198,6 +201,20 @@ export async function exportReportWorkbook(projectId) {
 export async function downloadReportXlsx(projectId, shipId) {
   const { workbook, counts } = await exportReportWorkbook(projectId)
   const fileName = `Report_${shipId || 'project'}_${new Date().toISOString().slice(0, 10)}.xlsx`
-  XLSX.writeFile(workbook, fileName)
+  
+  const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => {
+    try {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {}
+  }, 1500)
   return counts
 }
