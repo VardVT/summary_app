@@ -29,7 +29,7 @@ interface SignInModalProps {
 }
 
 export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => {
-  const { signIn, isDemoMode } = useAuth();
+  const { signIn, loginAsViewer, isDemoMode } = useAuth();
 
   // User Directory State
   const [directoryUsers, setDirectoryUsers] = useState<UserProfile[]>(DEFAULT_DIRECTORY_USERS);
@@ -38,10 +38,11 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
   const [sourceMessage, setSourceMessage] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all');
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(DEFAULT_DIRECTORY_USERS[1]); // Default to Nguyen Tran Hung
+  const defaultUser = DEFAULT_DIRECTORY_USERS[0] || null;
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(defaultUser);
 
   // Form State
-  const [email, setEmail] = useState<string>(DEFAULT_DIRECTORY_USERS[1].email);
+  const [email, setEmail] = useState<string>(defaultUser?.email || '');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -80,8 +81,8 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
       setSuccessMsg(null);
       setPassword('');
       if (directoryUsers.length > 0 && !selectedUser) {
-        setSelectedUser(directoryUsers[1]);
-        setEmail(directoryUsers[1].email);
+        setSelectedUser(directoryUsers[0]);
+        setEmail(directoryUsers[0].email);
       }
     }
   }, [isOpen]);
@@ -348,6 +349,21 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
 
           {/* Right Column: Password Authentication Form */}
           <div className="w-full lg:w-[320px] bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between shrink-0">
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  loginAsViewer();
+                  setSuccessMsg('Đã đăng nhập nhanh với quyền Viewer (Không cần mật khẩu)!');
+                  setTimeout(() => onClose(), 400);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold font-sans text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 transition-all cursor-pointer mb-4"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Vào Nhanh Viewer (Không Cần Mật Khẩu)</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSubmitSignIn} className="space-y-4">
               <div>
                 <span className="font-bold text-amber-400 text-xs font-mono flex items-center gap-1.5 mb-3">
