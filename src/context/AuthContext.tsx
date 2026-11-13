@@ -321,7 +321,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<any | null>(null);
-  const [role, setRole] = useState<UserRole>('lead');
+  const [role, setRole] = useState<UserRole>('viewer');
   const [loading, setLoading] = useState<boolean>(true);
   const isDemoMode = !isSupabaseConfigured;
 
@@ -412,6 +412,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setSession(session);
         if (session?.user) {
           loadProfileForUser(session.user);
+        } else {
+          setUser(null);
+          setRole('viewer');
         }
         setLoading(false);
       });
@@ -422,6 +425,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           loadProfileForUser(session.user);
         } else {
           setUser(null);
+          setRole('viewer');
         }
         setLoading(false);
       });
@@ -456,6 +460,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else {
         setUser(null);
         setSession(null);
+        setRole('viewer');
       }
       setLoading(false);
     }
@@ -597,6 +602,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     setUser(null);
     setSession(null);
+    setRole('viewer');
     localStorage.removeItem('piping_shell_user_profile');
     localStorage.setItem('piping_shell_logged_out', 'true');
   };
@@ -639,14 +645,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.setItem('piping_shell_user_profile', JSON.stringify(viewerUser));
   };
 
-  const baseCaps = ROLE_CAPABILITIES[role] || [];
-  const hasPermManager =
-    typeof user?.canManageAppPermissions === 'boolean'
-      ? user.canManageAppPermissions
-      : baseCaps.includes('manage_app_permissions');
-  const caps: Capability[] = hasPermManager
-    ? Array.from(new Set([...baseCaps, 'manage_app_permissions']))
-    : baseCaps.filter(c => c !== 'manage_app_permissions');
+  const baseCaps = user ? ROLE_CAPABILITIES[role] || [] : [];
+  const hasPermManager = Boolean(
+    user &&
+      (typeof user.canManageAppPermissions === 'boolean'
+        ? user.canManageAppPermissions
+        : baseCaps.includes('manage_app_permissions')),
+  );
+  const caps: Capability[] = user
+    ? hasPermManager
+      ? Array.from(new Set([...baseCaps, 'manage_app_permissions']))
+      : baseCaps.filter(c => c !== 'manage_app_permissions')
+    : [];
 
   return (
     <AuthContext.Provider

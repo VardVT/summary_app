@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldAlert, ArrowLeft, Lock, KeyRound } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, Lock, KeyRound, LogIn } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Capability } from '../types';
+import { SignInModal } from '../components/SignInModal';
 
 interface ForbiddenPageProps {
   requiredCap?: Capability;
@@ -12,7 +13,10 @@ interface ForbiddenPageProps {
 
 export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap, appLabel, isBanned }) => {
   const navigate = useNavigate();
-  const { role, isDemoMode, setDemoRole } = useAuth();
+  const { user, role, isDemoMode, setDemoRole } = useAuth();
+  const [signInOpen, setSignInOpen] = useState(false);
+
+  const notSignedIn = !user;
 
   return (
     <div className="min-h-[75vh] flex flex-col items-center justify-center p-6 text-center">
@@ -29,19 +33,24 @@ export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap, appLa
 
         {/* Icon Header */}
         <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-6 text-red-400">
-          {isBanned ? <Lock className="w-8 h-8" /> : <ShieldAlert className="w-8 h-8" />}
+          {isBanned || notSignedIn ? <Lock className="w-8 h-8" /> : <ShieldAlert className="w-8 h-8" />}
         </div>
 
         <div className="inline-block px-2.5 py-1 bg-red-500/10 border border-red-500/20 rounded text-[11px] font-mono text-red-400 tracking-wider uppercase mb-3">
-          {isBanned ? 'Error 403 · App Access Banned' : 'Error 403 · Access Denied'}
+          {notSignedIn ? 'Error 401 · Sign In Required' : isBanned ? 'Error 403 · App Access Banned' : 'Error 403 · Access Denied'}
         </div>
 
         <h1 className="text-2xl font-bold text-slate-100 dark:text-slate-100 light:text-slate-900 mb-3">
-          {isBanned ? 'Application Access Restricted' : 'Insufficient Clearance Level'}
+          {notSignedIn ? 'Authentication Required' : isBanned ? 'Application Access Restricted' : 'Insufficient Clearance Level'}
         </h1>
 
         <p className="text-sm text-slate-400 dark:text-slate-400 light:text-slate-600 mb-6 leading-relaxed">
-          {isBanned ? (
+          {notSignedIn ? (
+            <>
+              You must sign in with an authorized account to access{' '}
+              <strong className="text-slate-200">{appLabel || 'this application'}</strong>.
+            </>
+          ) : isBanned ? (
             <>
               Your account (<strong className="text-amber-400 font-mono">{role.toUpperCase()}</strong>) has been set to{' '}
               <strong className="text-red-400 font-mono">BAN</strong> for{' '}
@@ -55,7 +64,7 @@ export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap, appLa
           )}
         </p>
 
-        {isDemoMode && (
+        {!notSignedIn && isDemoMode && (
           <div className="mb-6 p-4 bg-slate-800/80 dark:bg-slate-800/80 light:bg-slate-100 border border-amber-500/30 rounded-lg text-left">
             <div className="flex items-center gap-2 text-xs font-semibold text-amber-400 mb-2">
               <KeyRound className="w-4 h-4 shrink-0" />
@@ -80,15 +89,26 @@ export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap, appLa
         )}
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          {notSignedIn && (
+            <button
+              onClick={() => setSignInOpen(true)}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold text-slate-950 bg-[#F59E0B] hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20 cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Sign In</span>
+            </button>
+          )}
           <button
             onClick={() => navigate('/')}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-xs font-medium text-slate-900 bg-amber-500 hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Return to Launcher</span>
           </button>
         </div>
       </div>
+
+      <SignInModal isOpen={signInOpen} onClose={() => setSignInOpen(false)} />
     </div>
   );
 };

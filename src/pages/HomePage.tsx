@@ -26,7 +26,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
 import { APPS_CONFIG } from '../config/apps';
-import { AppConfig, UserRole } from '../types';
+import { AppAccessLevel, AppConfig, UserRole } from '../types';
 import { BackgroundSlideshow } from '../components/BackgroundSlideshow';
 import { SignInModal } from '../components/SignInModal';
 import { resolveEffectiveAppAccess } from '../services/teamDirectoryService';
@@ -54,6 +54,12 @@ export const HomePage: React.FC = () => {
   const [signInModalOpen, setSignInModalOpen] = useState<boolean>(false);
   const [userMenuOpen, setUserMenuOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [hoveredDock, setHoveredDock] = useState<{
+    app: AppConfig;
+    accessLevel: AppAccessLevel;
+    left: number;
+    top: number;
+  } | null>(null);
 
   // States to toggle card visibility / minimize so user can view full wallpaper
   const [bulletinCollapsed, setBulletinCollapsed] = useState<boolean>(false);
@@ -387,36 +393,81 @@ export const HomePage: React.FC = () => {
           <LayoutGrid className="w-6 h-6 fill-current" />
         </button>
 
-        {/* Center Dock: 8 Scaled Up Vibrant App Launchers */}
-        <div className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl p-2.5 flex items-center justify-center gap-2.5 sm:gap-3 shadow-2xl overflow-x-auto no-scrollbar max-w-full">
+        {/* Center Dock: Scaled Up Vibrant App Launchers */}
+        <div
+          onMouseLeave={() => setHoveredDock(null)}
+          className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl p-2.5 flex items-center justify-center gap-2.5 sm:gap-3 shadow-2xl overflow-x-auto no-scrollbar max-w-full"
+        >
           {APPS_CONFIG.map(app => {
             const IconComponent = ICON_MAP[app.icon] || CheckCircle2;
             const accessLevel = resolveEffectiveAppAccess(user, role, app);
             const hasPermission = accessLevel !== 'ban';
 
+            const showTooltip = (el: HTMLElement) => {
+              const rect = el.getBoundingClientRect();
+              setHoveredDock({
+                app,
+                accessLevel,
+                left: rect.left + rect.width / 2,
+                top: rect.top,
+              });
+            };
+
             return (
               <button
                 key={app.id}
-                onClick={() => handleAppLaunch(app)}
-                title={`${app.label} (${app.tag})${accessLevel === 'ban' ? ' · BANNED' : accessLevel === 'view' ? ' · VIEW ONLY' : ''}`}
-                className={`group relative w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg hover:-translate-y-1 hover:scale-110 transition-all duration-200 cursor-pointer ${
+                onClick={() => {
+                  setHoveredDock(null);
+                  handleAppLaunch(app);
+                }}
+                onMouseEnter={e => showTooltip(e.currentTarget)}
+                onMouseLeave={() => setHoveredDock(prev => (prev?.app.id === app.id ? null : prev))}
+                onFocus={e => showTooltip(e.currentTarget)}
+                onBlur={() => setHoveredDock(prev => (prev?.app.id === app.id ? null : prev))}
+                aria-label={`${app.label} (${app.tag})`}
+                className={`relative w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg hover:-translate-y-1 hover:scale-110 transition-all duration-200 cursor-pointer shrink-0 ${
                   app.color || 'bg-slate-700'
                 } ${!hasPermission ? 'opacity-45 grayscale' : ''}`}
               >
                 <IconComponent className="w-6 h-6 stroke-[2]" />
-
-                {/* Hover Tooltip Popup */}
-                <div className="absolute bottom-16 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 bg-slate-900 border border-slate-700 text-slate-100 text-xs font-sans font-semibold py-1.5 px-3 rounded-xl shadow-2xl whitespace-nowrap z-50">
-                  <span>{app.label}</span>
-                  <span className="text-[11px] font-mono text-amber-400 block">
-                    {app.tag}
-                    {accessLevel === 'ban' ? ' · Banned' : accessLevel === 'view' ? ' · View Only' : ' · Edit'}
-                  </span>
-                </div>
               </button>
             );
           })}
         </div>
+
+        {/* Unclipped Floating Dock Tooltip */}
+        {hoveredDock && (
+          <div
+            className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-full"
+            style={{ left: hoveredDock.left, top: hoveredDock.top - 12 }}
+          >
+            <div className="bg-[#0A1623]/95 border border-slate-700 text-slate-100 rounded-xl px-3.5 py-2 shadow-2xl backdrop-blur-xl whitespace-nowrap text-center">
+              <div className="text-xs font-sans font-bold text-white leading-tight">
+                {hoveredDock.app.label}
+              </div>
+              <div className="text-[11px] font-mono mt-0.5 flex items-center justify-center gap-1.5">
+                <span className="text-amber-400 font-semibold">{hoveredDock.app.tag}</span>
+                <span className="text-slate-600">·</span>
+                <span
+                  className={
+                    hoveredDock.accessLevel === 'ban'
+                      ? 'text-red-400 font-semibold'
+                      : hoveredDock.accessLevel === 'view'
+                      ? 'text-cyan-400 font-semibold'
+                      : 'text-emerald-400 font-semibold'
+                  }
+                >
+                  {hoveredDock.accessLevel === 'ban'
+                    ? 'Banned'
+                    : hoveredDock.accessLevel === 'view'
+                    ? 'View Only'
+                    : 'Edit'}
+                </span>
+              </div>
+            </div>
+            <div className="w-2.5 h-2.5 bg-[#0A1623] border-r border-b border-slate-700 rotate-45 mx-auto -mt-1.5" />
+          </div>
+        )}
 
         {/* Far Right: Clock & User Sign In/Out Widget */}
         <div className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl px-4 py-2 flex items-center gap-4 shadow-2xl text-xs sm:text-sm font-mono text-slate-300 shrink-0 relative">

@@ -19,7 +19,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
 import { APPS_CONFIG } from '../config/apps';
-import { AppConfig } from '../types';
+import { AppAccessLevel, AppConfig } from '../types';
 import { BackgroundSlideshow } from './BackgroundSlideshow';
 import { SignInModal } from './SignInModal';
 import { resolveEffectiveAppAccess } from '../services/teamDirectoryService';
@@ -47,6 +47,12 @@ export const AppShell: React.FC = () => {
   const [gridOverlayOpen, setGridOverlayOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [signInModalOpen, setSignInModalOpen] = useState<boolean>(false);
+  const [hoveredDock, setHoveredDock] = useState<{
+    app: AppConfig;
+    accessLevel: AppAccessLevel;
+    left: number;
+    top: number;
+  } | null>(null);
 
   const isHomePage = location.pathname === '/';
 
@@ -188,19 +194,39 @@ export const AppShell: React.FC = () => {
           <LayoutGrid className="w-5 h-5 fill-current" />
         </button>
 
-        <div className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl p-1.5 flex items-center justify-center gap-2 shadow-2xl overflow-x-auto no-scrollbar max-w-full">
+        <div
+          onMouseLeave={() => setHoveredDock(null)}
+          className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl p-1.5 flex items-center justify-center gap-2 shadow-2xl overflow-x-auto no-scrollbar max-w-full"
+        >
           {APPS_CONFIG.map(app => {
             const IconComponent = ICON_MAP[app.icon] || CheckCircle2;
             const isSelected = location.pathname === `/apps/${app.id}`;
             const accessLevel = resolveEffectiveAppAccess(user, role, app);
             const hasPermission = accessLevel !== 'ban';
 
+            const showTooltip = (el: HTMLElement) => {
+              const rect = el.getBoundingClientRect();
+              setHoveredDock({
+                app,
+                accessLevel,
+                left: rect.left + rect.width / 2,
+                top: rect.top,
+              });
+            };
+
             return (
               <button
                 key={app.id}
-                onClick={() => handleAppLaunch(app)}
-                title={`${app.label} (${app.tag})${accessLevel === 'ban' ? ' · BANNED' : accessLevel === 'view' ? ' · VIEW ONLY' : ''}`}
-                className={`group relative w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-md hover:-translate-y-1 transition-all duration-200 cursor-pointer ${
+                onClick={() => {
+                  setHoveredDock(null);
+                  handleAppLaunch(app);
+                }}
+                onMouseEnter={e => showTooltip(e.currentTarget)}
+                onMouseLeave={() => setHoveredDock(prev => (prev?.app.id === app.id ? null : prev))}
+                onFocus={e => showTooltip(e.currentTarget)}
+                onBlur={() => setHoveredDock(prev => (prev?.app.id === app.id ? null : prev))}
+                aria-label={`${app.label} (${app.tag})`}
+                className={`relative w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-md hover:-translate-y-1 transition-all duration-200 cursor-pointer shrink-0 ${
                   app.color || 'bg-slate-700'
                 } ${isSelected ? 'ring-2 ring-amber-400 scale-105' : ''} ${!hasPermission ? 'opacity-45 grayscale' : ''}`}
               >
@@ -209,6 +235,40 @@ export const AppShell: React.FC = () => {
             );
           })}
         </div>
+
+        {/* Unclipped Floating Dock Tooltip */}
+        {hoveredDock && (
+          <div
+            className="fixed z-[60] pointer-events-none -translate-x-1/2 -translate-y-full"
+            style={{ left: hoveredDock.left, top: hoveredDock.top - 10 }}
+          >
+            <div className="bg-[#0A1623]/95 border border-slate-700 text-slate-100 rounded-xl px-3 py-1.5 shadow-2xl backdrop-blur-xl whitespace-nowrap text-center">
+              <div className="text-xs font-sans font-bold text-white leading-tight">
+                {hoveredDock.app.label}
+              </div>
+              <div className="text-[11px] font-mono mt-0.5 flex items-center justify-center gap-1.5">
+                <span className="text-amber-400 font-semibold">{hoveredDock.app.tag}</span>
+                <span className="text-slate-600">·</span>
+                <span
+                  className={
+                    hoveredDock.accessLevel === 'ban'
+                      ? 'text-red-400 font-semibold'
+                      : hoveredDock.accessLevel === 'view'
+                      ? 'text-cyan-400 font-semibold'
+                      : 'text-emerald-400 font-semibold'
+                  }
+                >
+                  {hoveredDock.accessLevel === 'ban'
+                    ? 'Banned'
+                    : hoveredDock.accessLevel === 'view'
+                    ? 'View Only'
+                    : 'Edit'}
+                </span>
+              </div>
+            </div>
+            <div className="w-2 h-2 bg-[#0A1623] border-r border-b border-slate-700 rotate-45 mx-auto -mt-1" />
+          </div>
+        )}
 
         <div className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl px-3 py-1 flex items-center gap-2 shadow-2xl text-xs font-mono text-slate-300 shrink-0">
           <Monitor className="w-3.5 h-3.5 text-slate-400" />

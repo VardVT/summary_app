@@ -120,32 +120,33 @@ export function resolveEffectiveAppAccess(
   role: UserRole,
   app: Pick<AppConfig, 'id' | 'requiredCap'>,
 ): AppAccessLevel {
-  if (user) {
-    const stored = getStoredOverrideForUser(user.id, user.email);
-    const storedOverride = stored?.appPermissions?.[app.id];
-    if (storedOverride === 'edit' || storedOverride === 'view' || storedOverride === 'ban') {
-      return storedOverride;
-    }
-    const directOverride = user.appPermissions?.[app.id];
-    if (directOverride === 'edit' || directOverride === 'view' || directOverride === 'ban') {
-      return directOverride;
-    }
-    if (app.id === 'team-settings' && getUserCanManageAppPermissions(user, role)) {
-      return 'edit';
-    }
+  if (!user) {
+    // Unauthenticated visitors cannot enter APP-09 or write/admin modules
+    return getDefaultAppAccessForRole('viewer', app);
+  }
+  const stored = getStoredOverrideForUser(user.id, user.email);
+  const storedOverride = stored?.appPermissions?.[app.id];
+  if (storedOverride === 'edit' || storedOverride === 'view' || storedOverride === 'ban') {
+    return storedOverride;
+  }
+  const directOverride = user.appPermissions?.[app.id];
+  if (directOverride === 'edit' || directOverride === 'view' || directOverride === 'ban') {
+    return directOverride;
+  }
+  if (app.id === 'team-settings' && getUserCanManageAppPermissions(user, role)) {
+    return 'edit';
   }
   return getDefaultAppAccessForRole(role, app);
 }
 
 export function getUserCanManageAppPermissions(user: UserProfile | null, role: UserRole): boolean {
-  if (user) {
-    if (typeof user.canManageAppPermissions === 'boolean') {
-      return user.canManageAppPermissions;
-    }
-    const stored = getStoredOverrideForUser(user.id, user.email);
-    if (typeof stored?.canManageAppPermissions === 'boolean') {
-      return stored.canManageAppPermissions;
-    }
+  if (!user) return false;
+  if (typeof user.canManageAppPermissions === 'boolean') {
+    return user.canManageAppPermissions;
+  }
+  const stored = getStoredOverrideForUser(user.id, user.email);
+  if (typeof stored?.canManageAppPermissions === 'boolean') {
+    return stored.canManageAppPermissions;
   }
   return role === 'admin' || role === 'lead';
 }

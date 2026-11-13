@@ -596,15 +596,29 @@ export const TeamManagementWorkspace: React.FC<{ readOnly?: boolean }> = ({ read
     }
   };
 
-  // Explicit guard inside workspace unless readOnly view was granted
+  // Explicit guard inside workspace: block unauthenticated users, and block unauthorized users unless readOnly view was granted
+  if (!currentUser) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 bg-[#0B1F33]">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
+          <Lock className="w-10 h-10 text-red-400 mx-auto mb-3" />
+          <h2 className="text-lg font-bold text-white mb-2">Sign In Required · Lead &amp; Admin Only</h2>
+          <p className="text-xs text-slate-400">
+            Please sign in with an authorized Lead or Admin account to access Team &amp; Account Settings (APP-09).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!readOnly && !canManageAccounts && !canManageAppPermissions) {
     return (
       <div className="flex-1 flex items-center justify-center p-6 bg-[#0B1F33]">
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
           <Lock className="w-10 h-10 text-red-400 mx-auto mb-3" />
-          <h2 className="text-lg font-bold text-white mb-2">Restricted Area · Lead & Admin Only</h2>
+          <h2 className="text-lg font-bold text-white mb-2">Restricted Area · Lead &amp; Admin Only</h2>
           <p className="text-xs text-slate-400">
-            Team & Account Settings (APP-09) is restricted to Lead, Admin, or users granted app-permission management rights.
+            Team &amp; Account Settings (APP-09) is restricted to Lead, Admin, or users granted app-permission management rights.
           </p>
         </div>
       </div>
