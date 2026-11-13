@@ -53,7 +53,7 @@ export const ModuleListPage: React.FC<ModuleListPageProps> = ({
           <h2 className="text-xl font-bold text-white">Danh sách Module</h2>
           <p className="text-xs font-mono text-slate-400 mt-0.5">
             {permissions.isGuest
-              ? 'Chế độ Guest chỉ hiển thị module công khai Equipment Modeling'
+              ? 'Chế độ Guest chỉ hiển thị module công khai AVEVA 3D'
               : `Tổng cộng ${modules.length} module đào tạo Piping Engineer`}
           </p>
         </div>

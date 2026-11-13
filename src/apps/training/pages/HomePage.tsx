@@ -89,8 +89,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             </span>
           </div>
           <p className="text-sm text-slate-300 max-w-3xl leading-relaxed">
-            Bạn đang truy cập với tư cách Guest (không có phiên đăng nhập nội bộ). Bạn có thể học toàn bộ module công khai{' '}
-            <strong className="text-white">Equipment Modeling</strong> và làm quiz chấm điểm tại chỗ (kết quả không lưu vào hệ thống).
+            Bạn đang truy cập với tư cách Guest (không có phiên đăng nhập nội bộ). Bạn có thể học module công khai{' '}
+            <strong className="text-white">AVEVA 3D</strong> (Equipment, Pipe, Layout) và làm quiz chấm điểm tại chỗ (kết quả không lưu vào hệ thống).
           </p>
         </div>
       ) : (
@@ -244,7 +244,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center gap-3 text-xs text-slate-300">
           <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
-            Các module nội bộ (Kiến thức nền DSS/DNV/SOLAS, Pipe Modeling, 2D Drawing, Hole & Report) và Thư viện tài liệu gốc sẽ hiển thị sau khi đăng nhập tài khoản kỹ sư VARD.
+            Các module nội bộ (Kiến thức nền DSS/DNV/SOLAS, AVEVA 2D, AVEVA khác, On job training trên Hull 997/1004/999/1000) và Thư viện tài liệu gốc sẽ hiển thị sau khi đăng nhập tài khoản kỹ sư VARD.
           </span>
         </div>
       )}

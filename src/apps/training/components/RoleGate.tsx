@@ -41,7 +41,7 @@ export const RoleGate: React.FC<RoleGateProps> = ({
       </h2>
       <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
         {require === 'authenticated'
-          ? 'Thư viện tài liệu gốc chỉ dành cho kỹ sư đã đăng nhập. Chế độ Guest chỉ truy cập được module công khai Equipment Modeling.'
+          ? 'Thư viện tài liệu gốc chỉ dành cho kỹ sư đã đăng nhập. Chế độ Guest chỉ truy cập được module công khai AVEVA 3D.'
           : 'Chức năng Soạn nội dung và Bảng tiến độ nhóm chỉ dành cho Lead (Senior / Manager) và Admin.'}
       </p>
       {onBack && (
