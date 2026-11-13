@@ -66,7 +66,7 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
     return { 
       users: [], 
       source: 'fallback', 
-      message: 'Chưa kết nối Supabase (đang dùng danh mục mẫu)' 
+      message: 'Chưa kết nối Supabase (đang dùng danh mục nội bộ)' 
     };
   }
 
@@ -75,7 +75,7 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
     const { data: profiles, error: profileErr } = await supabase
       .from('profiles')
       .select('*')
-      .limit(50);
+      .limit(100);
 
     if (!profileErr && profiles) {
       if (profiles.length > 0) {
@@ -84,6 +84,7 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
           let derivedRole: UserRole = 'engineer';
           if (rawPos.includes('admin')) derivedRole = 'admin';
           else if (rawPos.includes('manager') || rawPos.includes('lead') || rawPos.includes('senior')) derivedRole = 'lead';
+          else if (rawPos.includes('viewer') || rawPos.includes('inspect')) derivedRole = 'viewer';
 
           return {
             id: String(p.id || `supa-profile-${Math.random()}`),
@@ -95,6 +96,12 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
             employeeId: p.employee_id ? String(p.employee_id) : undefined,
             positionTitle: p.position || undefined,
             avatarUrl: p.avatar_url || p.avatarUrl,
+            themeColor: p.theme_color || undefined,
+            appAccess: p.app_access !== false,
+            canManageAppPermissions:
+              typeof p.can_manage_app_permissions === 'boolean' ? p.can_manage_app_permissions : undefined,
+            appPermissions:
+              p.app_permissions && typeof p.app_permissions === 'object' ? p.app_permissions : undefined,
           };
         });
         return {
@@ -106,7 +113,7 @@ export async function fetchSupabaseUsers(): Promise<FetchUsersResult> {
         return {
           users: DEFAULT_DIRECTORY_USERS,
           source: 'supabase',
-          message: `Đã kết nối Supabase (zfawytyfeaxvrvtjvsun). RLS đang bật, hiển thị danh mục 23 kỹ sư VARD.`,
+          message: `Đã kết nối Supabase (zfawytyfeaxvrvtjvsun). RLS đang bật, hiển thị danh mục nhân sự VARD.`,
         };
       }
     }

@@ -35,6 +35,7 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [kicked, setKicked] = useState(false) // true khi bị đăng xuất do đăng nhập nơi khác
+  const [shellAccessLevel, setShellAccessLevel] = useState(null) // 'edit' | 'view' | null
   const channelRef = useRef(null)
 
   async function fetchProfile(userId) {
@@ -131,18 +132,23 @@ export function AuthProvider({ children }) {
     initAuth()
 
     function handleShellMessage(event) {
-      if (event.data?.type === 'SHELL_CONTEXT' && event.data.user) {
-        const u = event.data.user
-        setProfile((prev) => prev || {
-          id: u.id,
-          email: u.email,
-          display_name: u.name,
-          position: u.positionTitle || u.role || 'Admin',
-          role: u.role || 'admin',
-          department: u.department || 'Piping Design',
-          employee_id: u.employeeId,
-        })
-        setLoading(false)
+      if (event.data?.type === 'SHELL_CONTEXT') {
+        if (event.data.accessLevel) {
+          setShellAccessLevel(event.data.accessLevel)
+        }
+        if (event.data.user) {
+          const u = event.data.user
+          setProfile((prev) => prev || {
+            id: u.id,
+            email: u.email,
+            display_name: u.name,
+            position: u.positionTitle || u.role || 'Admin',
+            role: u.role || 'admin',
+            department: u.department || 'Piping Design',
+            employee_id: u.employeeId,
+          })
+          setLoading(false)
+        }
       }
     }
     window.addEventListener('message', handleShellMessage)
@@ -175,7 +181,31 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const caps = getCapabilities(normalizeRole(profile?.position))
+  const baseCaps = getCapabilities(normalizeRole(profile?.position))
+  const caps =
+    shellAccessLevel === 'view'
+      ? {
+          ...baseCaps,
+          canLoadProject: false,
+          canCreateProject: false,
+          canDeleteProject: false,
+          canManageUsers: false,
+          canEditAllTasks: false,
+          canEditAssignedOnly: false,
+          canCreateTask: false,
+          canImportExcel: false,
+          canSubmitReview: false,
+          canReviewTasks: false,
+        }
+      : shellAccessLevel === 'edit' && baseCaps.role === 'viewer'
+      ? {
+          ...baseCaps,
+          canEditAssignedOnly: true,
+          canEditAllTasks: true,
+          canCreateTask: true,
+          canSubmitReview: true,
+        }
+      : baseCaps
 
   const value = {
     session, // TRẢ LẠI BIẾN NÀY ĐỂ KHÔNG LỖI APP

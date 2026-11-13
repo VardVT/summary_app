@@ -21,7 +21,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { UserRole, UserProfile } from '../types';
 import { fetchSupabaseUsers, isSupabaseConfigured } from '../services/supabase';
-import { DEFAULT_DIRECTORY_USERS } from '../context/AuthContext';
+import { getLocalTeamDirectory, memberToUserProfile, TEAM_UPDATED_EVENT } from '../services/teamDirectoryService';
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -32,13 +32,13 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
   const { signIn, loginAsViewer, isDemoMode } = useAuth();
 
   // User Directory State
-  const [directoryUsers, setDirectoryUsers] = useState<UserProfile[]>(DEFAULT_DIRECTORY_USERS);
+  const [directoryUsers, setDirectoryUsers] = useState<UserProfile[]>(() => getLocalTeamDirectory().map(memberToUserProfile));
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
   const [userSource, setUserSource] = useState<'supabase' | 'fallback'>('fallback');
   const [sourceMessage, setSourceMessage] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all');
-  const defaultUser = DEFAULT_DIRECTORY_USERS[0] || null;
+  const defaultUser = directoryUsers[0] || null;
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(defaultUser);
 
   // Form State
@@ -49,26 +49,28 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Fetch users from Supabase or fallback directory
+  // Fetch users from Supabase or local persistent directory
   const loadUsers = async () => {
     setIsLoadingUsers(true);
     try {
       const result = await fetchSupabaseUsers();
-      if (result.users && result.users.length > 0) {
+      if (result.users && result.users.length > 0 && result.source === 'supabase') {
         setDirectoryUsers(result.users);
         setUserSource('supabase');
         setSourceMessage(result.message || `Đã kết nối Supabase (${result.users.length} tài khoản)`);
       } else {
-        setDirectoryUsers(DEFAULT_DIRECTORY_USERS);
+        const localUsers = getLocalTeamDirectory().map(memberToUserProfile);
+        setDirectoryUsers(localUsers);
         setUserSource(isSupabaseConfigured ? 'supabase' : 'fallback');
         setSourceMessage(
-          result.message || (isSupabaseConfigured ? 'Supabase profiles trống, hiển thị 23 nhân sự VARD' : 'Danh mục nhân sự VARD')
+          result.message || (isSupabaseConfigured ? `Supabase profiles trống, hiển thị ${localUsers.length} nhân sự VARD` : `Danh mục nhân sự VARD (${localUsers.length} tài khoản)`)
         );
       }
     } catch {
-      setDirectoryUsers(DEFAULT_DIRECTORY_USERS);
+      const localUsers = getLocalTeamDirectory().map(memberToUserProfile);
+      setDirectoryUsers(localUsers);
       setUserSource('fallback');
-      setSourceMessage('Đang sử dụng danh mục nhân sự VARD');
+      setSourceMessage(`Đang sử dụng danh mục nhân sự VARD (${localUsers.length} tài khoản)`);
     } finally {
       setIsLoadingUsers(false);
     }
@@ -86,6 +88,14 @@ export const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => 
       }
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const onTeamUpdated = () => {
+      loadUsers();
+    };
+    window.addEventListener(TEAM_UPDATED_EVENT, onTeamUpdated);
+    return () => window.removeEventListener(TEAM_UPDATED_EVENT, onTeamUpdated);
+  }, []);
 
   // Filtered directory list
   const filteredUsers = useMemo(() => {

@@ -450,7 +450,7 @@ export async function parseDrawnFromPage(page: any): Promise<DrawnDetection> {
   }
 }
 
-export const DrawingReviewWorkspace: React.FC = () => {
+export const DrawingReviewWorkspace: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
   const { user } = useAuth();
   const { selectedProject } = useProject();
   const { addNotification } = useNotifications();
@@ -504,9 +504,15 @@ export const DrawingReviewWorkspace: React.FC = () => {
   const [formAssigneeEmail, setFormAssigneeEmail] = useState<string>('');
 
   // Mode & Filters
-  const [toolMode, setToolMode] = useState<'comment' | 'pan'>('comment');
+  const [toolMode, setToolMode] = useState<'comment' | 'pan'>(readOnly ? 'pan' : 'comment');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (readOnly) {
+      setToolMode('pan');
+    }
+  }, [readOnly]);
 
   // Load PDF Source
   const loadPdfSource = useCallback(async (source: ArrayBuffer | Uint8Array | string, fileName: string) => {
@@ -605,6 +611,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
 
   // Handle User Uploading PDF or DXF file
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
     const file = e.target.files?.[0];
     if (!file) return;
     try {
@@ -952,7 +959,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
 
   // Click on Canvas/Overlay to place a new pin
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!overlayRef.current || toolMode !== 'comment') return;
+    if (readOnly || !overlayRef.current || toolMode !== 'comment') return;
 
     const rect = overlayRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
@@ -985,7 +992,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
   // Submit Save for New or Edited Pin
   const handleSavePin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formTitle.trim()) return;
+    if (readOnly || !formTitle.trim()) return;
 
     const assignee = engineers.find(eng => eng.email === formAssigneeEmail) || 
                      currentDrawn.engineer || 
@@ -1055,6 +1062,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
 
   // Change Drawn person manually for current page
   const handleChangeDrawn = (newEmail: string) => {
+    if (readOnly) return;
     if (!newEmail) {
       const unassigned: DrawnDetection = {
         code: '',
@@ -1089,6 +1097,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
   // Delete a Pin
   const handleDeletePin = (pinId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (readOnly) return;
     setPins(prev => prev.filter(p => p.id !== pinId));
     if (selectedPin?.id === pinId) setSelectedPin(null);
     if (modalMode === 'edit') setModalMode(null);
@@ -1137,11 +1146,13 @@ export const DrawingReviewWorkspace: React.FC = () => {
         {/* Action Controls */}
         <div className="flex items-center gap-2">
           {/* Upload Button */}
-          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow cursor-pointer transition-colors">
-            <Upload className="w-3.5 h-3.5" />
-            <span>Tải Lên PDF / DXF</span>
-            <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
-          </label>
+          {!readOnly && (
+            <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow cursor-pointer transition-colors">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Tải Lên PDF / DXF</span>
+              <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
+            </label>
+          )}
 
           {/* Export Branches when Drawing is open */}
           {hasDrawing && (
@@ -1291,7 +1302,8 @@ export const DrawingReviewWorkspace: React.FC = () => {
                 <select
                   value={currentDrawn.engineer?.email || ''}
                   onChange={e => handleChangeDrawn(e.target.value)}
-                  className="bg-transparent text-slate-200 font-sans text-xs cursor-pointer focus:outline-none pr-1 max-w-[190px] truncate"
+                  disabled={readOnly}
+                  className="bg-transparent text-slate-200 font-sans text-xs cursor-pointer focus:outline-none pr-1 max-w-[190px] truncate disabled:opacity-70 disabled:cursor-not-allowed"
                   title="Người thực hiện bản vẽ (sẽ nhận thông báo khi có comment)"
                 >
                   <option value="" disabled className="bg-slate-900 text-slate-400">
@@ -1314,17 +1326,19 @@ export const DrawingReviewWorkspace: React.FC = () => {
               {/* Tool Mode & Zoom Controls */}
               <div className="flex items-center gap-3">
                 <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs font-mono">
-                  <button
-                    onClick={() => setToolMode('comment')}
-                    className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors cursor-pointer ${
-                      toolMode === 'comment'
-                        ? 'bg-amber-500 text-slate-950 font-bold shadow'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>Ghim Comment (Click Bản Vẽ)</span>
-                  </button>
+                  {!readOnly && (
+                    <button
+                      onClick={() => setToolMode('comment')}
+                      className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        toolMode === 'comment'
+                          ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Ghim Comment (Click Bản Vẽ)</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setToolMode('pan')}
                     className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors cursor-pointer ${
@@ -1397,11 +1411,13 @@ export const DrawingReviewWorkspace: React.FC = () => {
                 </div>
 
                 <div className="pt-2 flex flex-col gap-2.5">
-                  <label className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-colors">
-                    <Upload className="w-4 h-4" />
-                    <span>Chọn File PDF hoặc DXF Từ Máy</span>
-                    <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
-                  </label>
+                  {!readOnly && (
+                    <label className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg cursor-pointer transition-colors">
+                      <Upload className="w-4 h-4" />
+                      <span>Chọn File PDF hoặc DXF Từ Máy</span>
+                      <input type="file" accept=".pdf,.dxf" onChange={handleFileUpload} className="hidden" />
+                    </label>
+                  )}
 
                   <button
                     onClick={handleLoadSampleDxf}
@@ -1613,13 +1629,15 @@ export const DrawingReviewWorkspace: React.FC = () => {
                         }`}>
                           {pin.status === 'resolved' ? 'Đã duyệt' : pin.status === 'in_progress' ? 'Đang sửa' : 'Mới'}
                         </span>
-                        <button
-                          onClick={(e) => handleDeletePin(pin.id, e)}
-                          className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-                          title="Xóa comment"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {!readOnly && (
+                          <button
+                            onClick={(e) => handleDeletePin(pin.id, e)}
+                            className="p-1 text-slate-500 hover:text-red-400 transition-colors"
+                            title="Xóa comment"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1774,7 +1792,7 @@ export const DrawingReviewWorkspace: React.FC = () => {
               </div>
 
               <div className="flex items-center justify-between pt-3 border-t border-slate-800">
-                {modalMode === 'edit' && selectedPin ? (
+                {!readOnly && modalMode === 'edit' && selectedPin ? (
                   <button
                     type="button"
                     onClick={() => handleDeletePin(selectedPin.id)}
@@ -1791,15 +1809,17 @@ export const DrawingReviewWorkspace: React.FC = () => {
                     onClick={() => { setModalMode(null); setActivePinDraft(null); }}
                     className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono cursor-pointer"
                   >
-                    Hủy
+                    {readOnly ? 'Đóng' : 'Hủy'}
                   </button>
-                  <button 
-                    type="submit" 
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase font-sans flex items-center gap-1.5 shadow-lg shadow-amber-500/20 cursor-pointer"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{modalMode === 'create' ? `Gửi Đến ${currentDrawn.engineer?.name || 'Kỹ Sư'}` : 'Cập Nhật Comment'}</span>
-                  </button>
+                  {!readOnly && (
+                    <button 
+                      type="submit" 
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs uppercase font-sans flex items-center gap-1.5 shadow-lg shadow-amber-500/20 cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{modalMode === 'create' ? `Gửi Đến ${currentDrawn.engineer?.name || 'Kỹ Sư'}` : 'Cập Nhật Comment'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </form>

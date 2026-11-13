@@ -1,5 +1,9 @@
+export type AppAccessLevel = 'edit' | 'view' | 'ban';
+
 export type Capability = 
   | 'manage_apps'
+  | 'manage_users'
+  | 'manage_app_permissions'
   | 'edit_data'
   | 'view_drawings'
   | 'export_reports'
@@ -20,9 +24,13 @@ export interface UserProfile {
   section: string;
   employeeId?: string;
   positionTitle?: string;
+  themeColor?: string;
+  appAccess?: boolean;
+  canManageAppPermissions?: boolean;
+  appPermissions?: Record<string, AppAccessLevel>;
 }
 
-export type AppCategory = 'Design' | 'Control' | 'Materials' | 'Reporting';
+export type AppCategory = 'Design' | 'Control' | 'Materials' | 'Reporting' | 'Settings';
 
 export type AppStatus = 'active' | 'beta' | 'soon';
 
@@ -91,6 +99,7 @@ export interface ShellPostMessageContext {
   refreshToken: string | null;
   projectId: string;
   user: UserProfile | null;
+  accessLevel?: AppAccessLevel;
 }
 
 export interface AppPostMessageNotification {

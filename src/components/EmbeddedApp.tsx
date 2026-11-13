@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ExternalLink, RefreshCw, AlertTriangle, CheckCircle2, ShieldCheck, Loader2, Play, Terminal } from 'lucide-react';
-import { AppConfig, ShellPostMessageContext, AppPostMessageNotification } from '../types';
+import { ExternalLink, RefreshCw, AlertTriangle, CheckCircle2, ShieldCheck, Loader2, Play, Terminal, Eye } from 'lucide-react';
+import { AppAccessLevel, AppConfig, ShellPostMessageContext, AppPostMessageNotification } from '../types';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
 import { useNotifications } from '../hooks/useNotifications';
 import { APPS_CONFIG } from '../config/apps';
 import { DrawingReviewWorkspace } from './DrawingReviewWorkspace';
+import { TeamManagementWorkspace } from './TeamManagementWorkspace';
 
 interface EmbeddedAppProps {
   app: AppConfig;
+  accessLevel?: AppAccessLevel;
 }
 
-export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
+export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app, accessLevel = 'edit' }) => {
   const { session, user } = useAuth();
   const { selectedProject } = useProject();
   const { addNotification } = useNotifications();
@@ -46,6 +48,7 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
       refreshToken: session?.refresh_token || 'demo_refresh_xyz',
       projectId: selectedProject.id,
       user,
+      accessLevel,
     };
 
     // Requirement: Never use '*', send to exact targetOrigin (fallback to '*' only if relative)
@@ -57,14 +60,14 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
     } catch (err) {
       console.warn('postMessage to iframe failed:', err);
     }
-  }, [session, selectedProject, user, targetOrigin]);
+  }, [session, selectedProject, user, targetOrigin, accessLevel]);
 
-  // Re-send context whenever Project changes
+  // Re-send context whenever Project or accessLevel changes
   useEffect(() => {
     if (!isLoading && !hasError) {
       sendShellContext();
     }
-  }, [selectedProject, isLoading, hasError, sendShellContext]);
+  }, [selectedProject, accessLevel, isLoading, hasError, sendShellContext]);
 
   // Handle iframe onLoad event
   const handleIframeLoad = () => {
@@ -128,17 +131,27 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app }) => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] w-full bg-slate-950 overflow-hidden">
-      {/* Loading Bar Indicator */}
-      {isLoading && (
+      {/* Loading Bar Indicator (only for iframe apps) */}
+      {isLoading && app.id !== 'drawing-review' && app.id !== 'team-settings' && (
         <div className="w-full h-1 bg-slate-800 overflow-hidden relative shrink-0">
           <div className="h-full bg-gradient-to-r from-amber-500 via-cyan-400 to-amber-500 animate-pulse w-full" />
         </div>
       )}
 
+      {/* View-Only Access Notice */}
+      {accessLevel === 'view' && (
+        <div className="bg-cyan-950/90 border-b border-cyan-500/30 px-4 py-1.5 flex items-center justify-center gap-2 text-xs font-mono text-cyan-200 shrink-0">
+          <Eye className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <span>View-Only Mode · Editing, creating, and deleting actions are restricted for your account.</span>
+        </div>
+      )}
+
       {/* Main Content Area */}
-      <div className="flex-1 w-full h-full relative overflow-hidden bg-slate-950">
+      <div className="flex-1 w-full h-full relative overflow-hidden bg-slate-950 flex flex-col">
         {app.id === 'drawing-review' ? (
-          <DrawingReviewWorkspace />
+          <DrawingReviewWorkspace readOnly={accessLevel === 'view'} />
+        ) : app.id === 'team-settings' ? (
+          <TeamManagementWorkspace readOnly={accessLevel === 'view'} />
         ) : (
           <iframe
             key={iframeKey}

@@ -6,9 +6,11 @@ import { Capability } from '../types';
 
 interface ForbiddenPageProps {
   requiredCap?: Capability;
+  appLabel?: string;
+  isBanned?: boolean;
 }
 
-export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap }) => {
+export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap, appLabel, isBanned }) => {
   const navigate = useNavigate();
   const { role, isDemoMode, setDemoRole } = useAuth();
 
@@ -27,20 +29,30 @@ export const ForbiddenPage: React.FC<ForbiddenPageProps> = ({ requiredCap }) => 
 
         {/* Icon Header */}
         <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-6 text-red-400">
-          <ShieldAlert className="w-8 h-8" />
+          {isBanned ? <Lock className="w-8 h-8" /> : <ShieldAlert className="w-8 h-8" />}
         </div>
 
         <div className="inline-block px-2.5 py-1 bg-red-500/10 border border-red-500/20 rounded text-[11px] font-mono text-red-400 tracking-wider uppercase mb-3">
-          Error 403 · Access Denied
+          {isBanned ? 'Error 403 · App Access Banned' : 'Error 403 · Access Denied'}
         </div>
 
         <h1 className="text-2xl font-bold text-slate-100 dark:text-slate-100 light:text-slate-900 mb-3">
-          Insufficient Clearance Level
+          {isBanned ? 'Application Access Restricted' : 'Insufficient Clearance Level'}
         </h1>
 
         <p className="text-sm text-slate-400 dark:text-slate-400 light:text-slate-600 mb-6 leading-relaxed">
-          Your current account role <strong className="text-amber-400 font-mono">[{role.toUpperCase()}]</strong> does not possess the required engineering capability{' '}
-          {requiredCap && <span className="font-mono text-cyan-400">"{requiredCap}"</span>} to access this application or module.
+          {isBanned ? (
+            <>
+              Your account (<strong className="text-amber-400 font-mono">{role.toUpperCase()}</strong>) has been set to{' '}
+              <strong className="text-red-400 font-mono">BAN</strong> for{' '}
+              <strong className="text-slate-200">{appLabel || 'this application'}</strong>. Contact a Lead or Admin to restore View or Edit access.
+            </>
+          ) : (
+            <>
+              Your current account role <strong className="text-amber-400 font-mono">[{role.toUpperCase()}]</strong> does not possess the required engineering capability{' '}
+              {requiredCap && <span className="font-mono text-cyan-400">"{requiredCap}"</span>} to access this application or module.
+            </>
+          )}
         </p>
 
         {isDemoMode && (

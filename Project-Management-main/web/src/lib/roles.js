@@ -71,7 +71,7 @@ export function getCapabilities(role) {
     showSummary: true,
     showReviewRequests: isMgr || isSenior,
     showActiveUsers: isMgr,
-    showTeamDirectory: true,
+    showTeamDirectory: false,
     showCalendar: true,
     showReports: isMgr || isSenior,
     showPlanDrawing: true,

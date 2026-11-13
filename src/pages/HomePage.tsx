@@ -20,7 +20,8 @@ import {
   Eye,
   EyeOff,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Users
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
@@ -28,6 +29,7 @@ import { APPS_CONFIG } from '../config/apps';
 import { AppConfig, UserRole } from '../types';
 import { BackgroundSlideshow } from '../components/BackgroundSlideshow';
 import { SignInModal } from '../components/SignInModal';
+import { resolveEffectiveAppAccess } from '../services/teamDirectoryService';
 
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   CheckCircle2,
@@ -38,6 +40,7 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   Navigation,
   Calendar,
   TrendingUp,
+  Users,
 };
 
 export const HomePage: React.FC = () => {
@@ -90,13 +93,13 @@ export const HomePage: React.FC = () => {
   };
 
   const handleAppLaunch = (app: AppConfig) => {
-    const hasPermission = !app.requiredCap || caps.includes(app.requiredCap);
-    if (!hasPermission) {
+    const accessLevel = resolveEffectiveAppAccess(user, role, app);
+    if (accessLevel === 'ban') {
       if (!user) {
         setSignInModalOpen(true);
         return;
       }
-      navigate(`/apps/${app.id}`); // RequireCap handles 403 page
+      navigate(`/apps/${app.id}`); // AppPage renders ForbiddenPage with Ban notice
       return;
     }
     navigate(`/apps/${app.id}`);
@@ -388,23 +391,27 @@ export const HomePage: React.FC = () => {
         <div className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-2xl p-2.5 flex items-center justify-center gap-2.5 sm:gap-3 shadow-2xl overflow-x-auto no-scrollbar max-w-full">
           {APPS_CONFIG.map(app => {
             const IconComponent = ICON_MAP[app.icon] || CheckCircle2;
-            const hasPermission = !app.requiredCap || caps.includes(app.requiredCap);
+            const accessLevel = resolveEffectiveAppAccess(user, role, app);
+            const hasPermission = accessLevel !== 'ban';
 
             return (
               <button
                 key={app.id}
                 onClick={() => handleAppLaunch(app)}
-                title={`${app.label} (${app.tag})`}
+                title={`${app.label} (${app.tag})${accessLevel === 'ban' ? ' · BANNED' : accessLevel === 'view' ? ' · VIEW ONLY' : ''}`}
                 className={`group relative w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg hover:-translate-y-1 hover:scale-110 transition-all duration-200 cursor-pointer ${
                   app.color || 'bg-slate-700'
-                } ${!hasPermission ? 'opacity-50 grayscale' : ''}`}
+                } ${!hasPermission ? 'opacity-45 grayscale' : ''}`}
               >
                 <IconComponent className="w-6 h-6 stroke-[2]" />
 
                 {/* Hover Tooltip Popup */}
                 <div className="absolute bottom-16 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 bg-slate-900 border border-slate-700 text-slate-100 text-xs font-sans font-semibold py-1.5 px-3 rounded-xl shadow-2xl whitespace-nowrap z-50">
                   <span>{app.label}</span>
-                  <span className="text-[11px] font-mono text-amber-400 block">{app.tag}</span>
+                  <span className="text-[11px] font-mono text-amber-400 block">
+                    {app.tag}
+                    {accessLevel === 'ban' ? ' · Banned' : accessLevel === 'view' ? ' · View Only' : ' · Edit'}
+                  </span>
                 </div>
               </button>
             );
@@ -525,7 +532,8 @@ export const HomePage: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {filteredApps.map(app => {
                 const IconComponent = ICON_MAP[app.icon] || CheckCircle2;
-                const hasPermission = !app.requiredCap || caps.includes(app.requiredCap);
+                const accessLevel = resolveEffectiveAppAccess(user, role, app);
+                const hasPermission = accessLevel !== 'ban';
 
                 return (
                   <button
@@ -535,7 +543,7 @@ export const HomePage: React.FC = () => {
                       handleAppLaunch(app);
                     }}
                     className={`text-left p-5.5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-cyan-400/60 transition-all flex flex-col justify-between group ${
-                      !hasPermission ? 'opacity-60' : ''
+                      !hasPermission ? 'opacity-55 grayscale-[40%]' : ''
                     }`}
                   >
                     <div>
@@ -555,7 +563,17 @@ export const HomePage: React.FC = () => {
 
                     <div className="flex items-center justify-between pt-3 border-t border-slate-800/80 text-xs sm:text-sm font-mono text-slate-400">
                       <span>{app.category}</span>
-                      <span className="text-amber-400 font-bold">{app.rev}</span>
+                      <span
+                        className={`font-bold ${
+                          accessLevel === 'ban'
+                            ? 'text-red-400'
+                            : accessLevel === 'view'
+                            ? 'text-cyan-400'
+                            : 'text-emerald-400'
+                        }`}
+                      >
+                        {accessLevel === 'ban' ? 'BANNED' : accessLevel === 'view' ? 'VIEW' : 'EDIT'}
+                      </span>
                     </div>
                   </button>
                 );

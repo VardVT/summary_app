@@ -16,7 +16,6 @@ import {
   IconSummary,
   IconReview,
   IconCalendar,
-  IconUsers,
   IconReport,
   IconDrawing,
   IconPlus,
@@ -608,17 +607,6 @@ export function AppShell() {
             >
               <IconCalendar size={16} />
               {!collapsed && <span>Near-term Gantt</span>}
-            </NavLink>
-          )}
-
-          {caps.showTeamDirectory && (
-            <NavLink
-              to="/users"
-              className={({ isActive }) => `pm-menu-item ${isActive ? 'active' : ''}`}
-              title="Team Members"
-            >
-              <IconUsers size={16} />
-              {!collapsed && <span>Team Members</span>}
             </NavLink>
           )}
 

@@ -115,7 +115,21 @@ export const APPS_CONFIG: AppConfig[] = [
     rev: 'REV 0',
     tag: 'APP-08',
     color: 'bg-[#0F766E]', // Teal
+  },
+  {
+    id: 'team-settings',
+    label: 'Team & Account Settings',
+    description: 'Manage engineering team directory, roles, app access permissions, and create or remove user accounts.',
+    icon: 'Users',
+    category: 'Settings',
+    type: 'route',
+    src: '/apps/team-settings',
+    requiredCap: 'manage_users',
+    status: 'active',
+    rev: 'REV A',
+    tag: 'APP-09',
+    color: 'bg-[#4F46E5]', // Indigo
   }
 ];
 
-export const APP_CATEGORIES = ['Design', 'Control', 'Materials', 'Reporting'] as const;
+export const APP_CATEGORIES = ['Design', 'Control', 'Materials', 'Reporting', 'Settings'] as const;
