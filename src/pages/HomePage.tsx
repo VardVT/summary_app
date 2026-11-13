@@ -21,7 +21,8 @@ import {
   EyeOff,
   ChevronLeft,
   ChevronRight,
-  Users
+  Users,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
@@ -46,7 +47,7 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { user, role, caps, signOut, isDemoMode, setDemoRole } = useAuth();
-  const { projects, selectedProject, setProject } = useProject();
+  const { projects, selectedProject, hasProjects, loading: projectsLoading, requiresAuth, setProject, refreshProjects } = useProject();
 
   const [currentTime, setCurrentTime] = useState<string>('');
   const [projectDropdownOpen, setProjectDropdownOpen] = useState<boolean>(false);
@@ -152,47 +153,92 @@ export const HomePage: React.FC = () => {
           </div>
         </div>
 
-        {/* Top Right: Project Selector Widget */}
+        {/* Top Right: Vessel Selector Widget */}
         <div className="relative">
           <button
-            onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+            onClick={() => {
+              const next = !projectDropdownOpen;
+              setProjectDropdownOpen(next);
+              if (next) refreshProjects();
+            }}
             className="bg-[#0E1D2D]/90 border border-slate-700/60 backdrop-blur-xl rounded-full px-5 py-2.5 flex items-center gap-3 text-xs sm:text-sm font-mono shadow-2xl hover:border-amber-500/50 transition-all cursor-pointer"
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                hasProjects ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
             <span className="font-bold text-base text-[#22D3EE] font-mono">{selectedProject.code}</span>
             <span className="text-slate-500 font-mono">|</span>
-            <span className="text-slate-100 font-sans font-medium text-xs sm:text-sm hidden sm:inline">{selectedProject.name}</span>
+            <span className="text-slate-100 font-sans font-medium text-xs sm:text-sm hidden sm:inline truncate max-w-[200px]">
+              {selectedProject.name}
+            </span>
           </button>
 
-          {/* Project Selector Dropdown Modal */}
+          {/* Vessel Selector Dropdown Modal */}
           {projectDropdownOpen && (
             <div className="absolute right-0 mt-2 w-80 bg-[#0E1D2D] border border-slate-700/80 rounded-2xl shadow-2xl p-3 z-50 backdrop-blur-xl">
-              <div className="px-2 py-1.5 border-b border-slate-800 text-xs font-mono text-cyan-400 uppercase tracking-wider font-semibold">
-                Select Active Ship Project
+              <div className="px-2 py-1.5 border-b border-slate-800 flex items-center justify-between">
+                <span className="text-xs font-mono text-cyan-400 uppercase tracking-wider font-semibold">
+                  Select Active Vessel
+                </span>
+                <button
+                  type="button"
+                  onClick={() => refreshProjects()}
+                  disabled={projectsLoading}
+                  title="Refresh vessels from database"
+                  className="p-1 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${projectsLoading ? 'animate-spin text-amber-400' : ''}`} />
+                </button>
               </div>
-              <div className="mt-2 space-y-1">
-                {projects.map(proj => (
-                  <button
-                    key={proj.id}
-                    onClick={() => {
-                      setProject(proj.id);
-                      setProjectDropdownOpen(false);
-                    }}
-                    className={`w-full text-left p-3 rounded-xl transition-all flex items-center justify-between text-xs sm:text-sm font-sans ${
-                      selectedProject.id === proj.id
-                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
-                        : 'hover:bg-slate-800/80 text-slate-300'
-                    }`}
-                  >
+              <div className="mt-2 space-y-1 max-h-80 overflow-y-auto pr-0.5">
+                {projects.length === 0 ? (
+                  <div className="p-4 text-center text-xs font-sans text-slate-400 space-y-2.5">
                     <div>
-                      <div className="font-mono text-amber-400 font-bold text-sm">{proj.code}</div>
-                      <div className="text-slate-200 text-xs font-medium truncate max-w-[200px]">{proj.name}</div>
+                      {projectsLoading
+                        ? 'Loading vessels from database...'
+                        : requiresAuth
+                        ? 'Sign in to load vessels from database.'
+                        : 'No vessels found in database.'}
                     </div>
-                    <span className="text-xs font-mono text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md font-semibold">
-                      {proj.progressPercentage}%
-                    </span>
-                  </button>
-                ))}
+                    {!projectsLoading && requiresAuth && !user && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProjectDropdownOpen(false);
+                          setSignInModalOpen(true);
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
+                      >
+                        Sign in
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  projects.map(proj => (
+                    <button
+                      key={proj.id}
+                      onClick={() => {
+                        setProject(proj.id);
+                        setProjectDropdownOpen(false);
+                      }}
+                      className={`w-full text-left p-3 rounded-xl transition-all flex items-center justify-between text-xs sm:text-sm font-sans ${
+                        selectedProject.id === proj.id
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                          : 'hover:bg-slate-800/80 text-slate-300'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="font-mono text-amber-400 font-bold text-sm truncate">{proj.code}</div>
+                        <div className="text-slate-200 text-xs font-medium truncate max-w-[195px]">{proj.name}</div>
+                      </div>
+                      <span className="text-xs font-mono text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md font-semibold shrink-0">
+                        {proj.progressPercentage}%
+                      </span>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -331,49 +377,45 @@ export const HomePage: React.FC = () => {
               </div>
 
               <div className="space-y-5">
-                {/* Item 1 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs sm:text-sm font-sans">
-                    <span className="text-slate-100 font-medium">Block 3 isometrics</span>
-                    <span className="font-mono font-bold text-[#22D3EE] text-sm sm:text-base">72%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#22D3EE] rounded-full w-[72%]" />
-                  </div>
-                </div>
+                {(selectedProject.groupProgress && selectedProject.groupProgress.length > 0
+                  ? selectedProject.groupProgress
+                  : [
+                      { name: '3D Drawing', avgPercent: 0, total: 0 },
+                      { name: 'ISO Generating', avgPercent: 0, total: 0 },
+                      { name: '2D Drawing', avgPercent: 0, total: 0 },
+                      { name: 'MTO', avgPercent: 0, total: 0 },
+                    ]
+                ).map(group => {
+                  const isIso = group.name.toLowerCase().includes('iso');
+                  const isMto = group.name.toLowerCase().includes('mto');
+                  const textColor = isIso
+                    ? 'text-[#10B981]'
+                    : isMto
+                    ? 'text-[#F59E0B]'
+                    : 'text-[#22D3EE]';
+                  const barColor = isIso
+                    ? 'bg-[#10B981]'
+                    : isMto
+                    ? 'bg-[#F59E0B]'
+                    : 'bg-[#22D3EE]';
 
-                {/* Item 2 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs sm:text-sm font-sans">
-                    <span className="text-slate-100 font-medium">Line List rev C</span>
-                    <span className="font-mono font-bold text-[#10B981] text-sm sm:text-base">96%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#10B981] rounded-full w-[96%]" />
-                  </div>
-                </div>
-
-                {/* Item 3 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs sm:text-sm font-sans">
-                    <span className="text-slate-100 font-medium">Hydro test packs</span>
-                    <span className="font-mono font-bold text-[#22D3EE] text-sm sm:text-base">41%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#22D3EE] rounded-full w-[41%]" />
-                  </div>
-                </div>
-
-                {/* Item 4 */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs sm:text-sm font-sans">
-                    <span className="text-slate-100 font-medium">Support schedule</span>
-                    <span className="font-mono font-bold text-[#22D3EE] text-sm sm:text-base">58%</span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#22D3EE] rounded-full w-[58%]" />
-                  </div>
-                </div>
+                  return (
+                    <div key={group.name} className="space-y-2">
+                      <div className="flex items-center justify-between text-xs sm:text-sm font-sans">
+                        <span className="text-slate-100 font-medium">{group.name}</span>
+                        <span className={`font-mono font-bold ${textColor} text-sm sm:text-base`}>
+                          {group.avgPercent}%
+                        </span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${barColor} rounded-full transition-all duration-500`}
+                          style={{ width: `${Math.min(100, Math.max(0, group.avgPercent))}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

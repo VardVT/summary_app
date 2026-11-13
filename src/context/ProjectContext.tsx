@@ -1,81 +1,154 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { Project } from '../types';
+import { useAuth } from './AuthContext';
+import { fetchDatabaseVessels } from '../services/supabase';
+
+const SELECTED_PROJECT_KEY = 'piping_shell_selected_project';
+const SUBAPP_PROJECT_KEY = 'pm_current_project_id';
+
+export const EMPTY_PROJECT: Project = {
+  id: '',
+  code: 'No Vessel',
+  name: 'No vessel loaded',
+  vesselType: 'Shipbuilding Vessel',
+  shipyard: 'VARD Engineering',
+  dwtOrCapacity: '—',
+  progressPercentage: 0,
+  activeSection: 'Piping Engineering',
+  status: 'Not Started',
+  department: 'Piping',
+  totalTasks: 0,
+  groupProgress: [
+    { name: '3D Drawing', avgPercent: 0, total: 0 },
+    { name: 'ISO Generating', avgPercent: 0, total: 0 },
+    { name: '2D Drawing', avgPercent: 0, total: 0 },
+    { name: 'MTO', avgPercent: 0, total: 0 },
+  ],
+};
 
 export interface ProjectContextType {
   projects: Project[];
   selectedProject: Project;
+  hasProjects: boolean;
+  loading: boolean;
+  requiresAuth: boolean;
+  error: string | null;
   setProject: (projectId: string) => void;
+  refreshProjects: () => Promise<void>;
 }
-
-export const SAMPLE_PROJECTS: Project[] = [
-  {
-    id: 'HN-1204',
-    code: 'HN-1204',
-    name: '12,000 DWT Chemical Tanker',
-    vesselType: 'IMO Type II Chemical / Oil Tanker',
-    shipyard: 'HD Hyundai Heavy Industries · Yard No. 1204',
-    dwtOrCapacity: '12,000 DWT',
-    progressPercentage: 68,
-    activeSection: 'Piping & Machinery Outfitting',
-    status: 'In Engineering',
-  },
-  {
-    id: 'FPSO-709',
-    code: 'FPSO-709',
-    name: 'Deepwater Floating Production Unit',
-    vesselType: 'FPSO - Santos Basin Field',
-    shipyard: 'Samsung Heavy Industries · Yard No. 709',
-    dwtOrCapacity: '150,000 bpd / 1.6M bbl storage',
-    progressPercentage: 42,
-    activeSection: 'Topside Piping & Module Integration',
-    status: 'In Engineering',
-  },
-  {
-    id: 'LNG-302',
-    code: 'LNG-302',
-    name: '174,000 m³ LNG Carrier',
-    vesselType: 'Mark III Flex Membrane LNG Carrier',
-    shipyard: 'Hanwha Ocean · Yard No. 302',
-    dwtOrCapacity: '174,000 m³ Cryogenic Cargo',
-    progressPercentage: 85,
-    activeSection: 'Cargo Handling & Reliquefaction Piping',
-    status: 'Construction',
-  },
-  {
-    id: 'OFF-882',
-    code: 'OFF-882',
-    name: 'Offshore Substation Platform',
-    vesselType: 'HVDC 800MW Offshore Wind Substation',
-    shipyard: 'Keppel Offshore & Marine · Yard No. 882',
-    dwtOrCapacity: '800 MW Grid Transfer',
-    progressPercentage: 91,
-    activeSection: 'Cooling Piping & Fire Suppression',
-    status: 'Commissioning',
-  },
-];
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [selectedProject, setSelectedProject] = useState<Project>(() => {
-    const savedId = localStorage.getItem('piping_shell_selected_project');
-    const found = SAMPLE_PROJECTS.find(p => p.id === savedId || p.code === savedId);
-    return found || SAMPLE_PROJECTS[0];
+  const { user, session } = useAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    return (
+      localStorage.getItem(SELECTED_PROJECT_KEY) ||
+      localStorage.getItem(SUBAPP_PROJECT_KEY) ||
+      ''
+    );
   });
+  const [loading, setLoading] = useState<boolean>(true);
+  const [requiresAuth, setRequiresAuth] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const setProject = (projectId: string) => {
-    const proj = SAMPLE_PROJECTS.find(p => p.id === projectId || p.code === projectId);
-    if (proj) {
-      setSelectedProject(proj);
-      localStorage.setItem('piping_shell_selected_project', proj.id);
+  const loadVessels = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const result = await fetchDatabaseVessels(session?.access_token);
+    setProjects(result.vessels);
+    setRequiresAuth(result.requiresAuth);
+    if (result.error) {
+      setError(result.error);
     }
-  };
 
-  return (
-    <ProjectContext.Provider value={{ projects: SAMPLE_PROJECTS, selectedProject, setProject }}>
-      {children}
-    </ProjectContext.Provider>
+    if (result.vessels.length > 0) {
+      setSelectedId(prevId => {
+        const saved =
+          prevId ||
+          localStorage.getItem(SELECTED_PROJECT_KEY) ||
+          localStorage.getItem(SUBAPP_PROJECT_KEY) ||
+          '';
+        const match = result.vessels.find(p => p.id === saved || p.code === saved);
+        const nextId = match ? match.id : result.vessels[0].id;
+        localStorage.setItem(SELECTED_PROJECT_KEY, nextId);
+        return nextId;
+      });
+    }
+    setLoading(false);
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    loadVessels();
+  }, [loadVessels, user?.id]);
+
+  // Keep vessel list synchronized if user logs in or edits vessels in Progress Management sub-app
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.includes('auth-token') || e.key === SUBAPP_PROJECT_KEY) {
+        if (e.key === SUBAPP_PROJECT_KEY && e.newValue) {
+          setSelectedId(e.newValue);
+          localStorage.setItem(SELECTED_PROJECT_KEY, e.newValue);
+        } else {
+          loadVessels();
+        }
+      }
+    };
+    const handleFocus = () => {
+      loadVessels();
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [loadVessels]);
+
+  const setProject = useCallback(
+    (projectId: string) => {
+      const proj = projects.find(p => p.id === projectId || p.code === projectId);
+      if (proj) {
+        setSelectedId(proj.id);
+        localStorage.setItem(SELECTED_PROJECT_KEY, proj.id);
+      }
+    },
+    [projects],
   );
+
+  const selectedProject = useMemo<Project>(() => {
+    if (projects.length === 0) {
+      if (loading) {
+        return {
+          ...EMPTY_PROJECT,
+          code: 'Loading...',
+          name: 'Loading vessels from database',
+        };
+      }
+      return {
+        ...EMPTY_PROJECT,
+        name: requiresAuth ? 'Sign in to load vessels' : 'No vessels in database',
+      };
+    }
+    return projects.find(p => p.id === selectedId || p.code === selectedId) || projects[0];
+  }, [projects, selectedId, loading, requiresAuth]);
+
+  const value = useMemo<ProjectContextType>(
+    () => ({
+      projects,
+      selectedProject,
+      hasProjects: projects.length > 0,
+      loading,
+      requiresAuth,
+      error,
+      setProject,
+      refreshProjects: loadVessels,
+    }),
+    [projects, selectedProject, loading, requiresAuth, error, setProject, loadVessels],
+  );
+
+  return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 };
 
 export const useProject = () => {

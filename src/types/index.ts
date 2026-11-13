@@ -51,6 +51,12 @@ export interface AppConfig {
   color?: string; // Background color for dock icon
 }
 
+export interface VesselGroupProgress {
+  name: string;
+  avgPercent: number;
+  total: number;
+}
+
 export interface Project {
   id: string;
   code: string;
@@ -60,7 +66,12 @@ export interface Project {
   dwtOrCapacity: string;
   progressPercentage: number;
   activeSection: string;
-  status: 'In Engineering' | 'Construction' | 'Commissioning';
+  status: string;
+  department?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  totalTasks?: number;
+  groupProgress?: VesselGroupProgress[];
 }
 
 export interface NotificationItem {

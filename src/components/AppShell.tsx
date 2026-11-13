@@ -14,7 +14,8 @@ import {
   Monitor,
   X,
   Search,
-  Users
+  Users,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
@@ -40,7 +41,7 @@ export const AppShell: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, role, signOut } = useAuth();
-  const { projects, selectedProject, setProject } = useProject();
+  const { projects, selectedProject, hasProjects, loading: projectsLoading, requiresAuth, setProject, refreshProjects } = useProject();
 
   const [currentTime, setCurrentTime] = useState<string>('');
   const [projectDropdownOpen, setProjectDropdownOpen] = useState<boolean>(false);
@@ -122,40 +123,93 @@ export const AppShell: React.FC = () => {
           </div>
         )}
 
-        {/* Top Right: Project Selector & User Control */}
+          {/* Top Right: Vessel Selector & User Control */}
         <div className="flex items-center gap-3">
           <div className="relative">
             <button
-              onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+              onClick={() => {
+                const next = !projectDropdownOpen;
+                setProjectDropdownOpen(next);
+                if (next) refreshProjects();
+              }}
               className="bg-slate-800/80 border border-slate-700 rounded-full px-3.5 py-1.5 flex items-center gap-2 text-xs font-mono text-slate-200 hover:border-amber-500/50 transition-all cursor-pointer"
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  hasProjects ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+              />
               <span className="font-bold text-[#22D3EE] font-mono">{selectedProject.code}</span>
               <span className="text-slate-500 hidden sm:inline">|</span>
-              <span className="text-slate-300 font-sans truncate max-w-[120px] hidden sm:inline">{selectedProject.name}</span>
+              <span className="text-slate-300 font-sans truncate max-w-[140px] hidden sm:inline">
+                {selectedProject.name}
+              </span>
             </button>
 
             {projectDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-64 bg-[#0E1D2D] border border-slate-700 rounded-2xl shadow-2xl p-2 z-50 backdrop-blur-xl">
-                <div className="px-2 py-1 text-[10px] font-mono text-cyan-400 uppercase">Select Active Project</div>
-                <div className="mt-1 space-y-1">
-                  {projects.map(proj => (
-                    <button
-                      key={proj.id}
-                      onClick={() => {
-                        setProject(proj.id);
-                        setProjectDropdownOpen(false);
-                      }}
-                      className={`w-full text-left p-2 rounded-xl text-xs font-sans ${
-                        selectedProject.id === proj.id
-                          ? 'bg-amber-500/20 text-amber-300 font-bold'
-                          : 'hover:bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      <div className="font-mono text-amber-400 font-bold">{proj.code}</div>
-                      <div className="text-slate-200 truncate">{proj.name}</div>
-                    </button>
-                  ))}
+              <div className="absolute right-0 mt-2 w-72 bg-[#0E1D2D] border border-slate-700 rounded-2xl shadow-2xl p-2.5 z-50 backdrop-blur-xl">
+                <div className="px-2 py-1.5 border-b border-slate-800 flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-cyan-400 uppercase font-semibold">
+                    Select Active Vessel
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => refreshProjects()}
+                    disabled={projectsLoading}
+                    title="Refresh vessels from database"
+                    className="p-1 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${projectsLoading ? 'animate-spin text-amber-400' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="mt-1.5 space-y-1 max-h-72 overflow-y-auto pr-0.5">
+                  {projects.length === 0 ? (
+                    <div className="p-3 text-center text-xs font-sans text-slate-400 space-y-2">
+                      <div>
+                        {projectsLoading
+                          ? 'Loading vessels from database...'
+                          : requiresAuth
+                          ? 'Sign in to load vessels from database.'
+                          : 'No vessels found in database.'}
+                      </div>
+                      {!projectsLoading && requiresAuth && !user && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProjectDropdownOpen(false);
+                            setSignInModalOpen(true);
+                          }}
+                          className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] cursor-pointer"
+                        >
+                          Sign in
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    projects.map(proj => (
+                      <button
+                        key={proj.id}
+                        onClick={() => {
+                          setProject(proj.id);
+                          setProjectDropdownOpen(false);
+                        }}
+                        className={`w-full text-left p-2 rounded-xl text-xs font-sans flex items-center justify-between gap-2 transition-colors ${
+                          selectedProject.id === proj.id
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                            : 'hover:bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="font-mono text-amber-400 font-bold truncate">{proj.code}</div>
+                          <div className="text-slate-200 truncate text-[11px] font-normal">{proj.name}</div>
+                        </div>
+                        <span className="text-[11px] font-mono text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md font-semibold shrink-0">
+                          {proj.progressPercentage}%
+                        </span>
+                      </button>
+                    ))
+                  )}
                 </div>
               </div>
             )}
