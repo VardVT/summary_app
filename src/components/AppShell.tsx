@@ -15,7 +15,8 @@ import {
   X,
   Search,
   Users,
-  RefreshCw
+  RefreshCw,
+  GraduationCap
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useProject } from '../hooks/useProject';
@@ -35,6 +36,7 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   Calendar,
   TrendingUp,
   Users,
+  GraduationCap,
 };
 
 export const AppShell: React.FC = () => {

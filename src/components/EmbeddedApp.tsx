@@ -7,6 +7,7 @@ import { useNotifications } from '../hooks/useNotifications';
 import { APPS_CONFIG } from '../config/apps';
 import { DrawingReviewWorkspace } from './DrawingReviewWorkspace';
 import { TeamManagementWorkspace } from './TeamManagementWorkspace';
+import { TrainingApp } from '../apps/training';
 
 interface EmbeddedAppProps {
   app: AppConfig;
@@ -132,14 +133,14 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app, accessLevel = 'ed
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] w-full bg-slate-950 overflow-hidden">
       {/* Loading Bar Indicator (only for iframe apps) */}
-      {isLoading && app.id !== 'drawing-review' && app.id !== 'team-settings' && (
+      {isLoading && app.id !== 'drawing-review' && app.id !== 'team-settings' && app.id !== 'training-app' && (
         <div className="w-full h-1 bg-slate-800 overflow-hidden relative shrink-0">
           <div className="h-full bg-gradient-to-r from-amber-500 via-cyan-400 to-amber-500 animate-pulse w-full" />
         </div>
       )}
 
       {/* View-Only Access Notice */}
-      {accessLevel === 'view' && (
+      {accessLevel === 'view' && app.id !== 'training-app' && (
         <div className="bg-cyan-950/90 border-b border-cyan-500/30 px-4 py-1.5 flex items-center justify-center gap-2 text-xs font-mono text-cyan-200 shrink-0">
           <Eye className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
           <span>View-Only Mode · Editing, creating, and deleting actions are restricted for your account.</span>
@@ -152,6 +153,8 @@ export const EmbeddedApp: React.FC<EmbeddedAppProps> = ({ app, accessLevel = 'ed
           <DrawingReviewWorkspace readOnly={accessLevel === 'view'} />
         ) : app.id === 'team-settings' ? (
           <TeamManagementWorkspace readOnly={accessLevel === 'view'} />
+        ) : app.id === 'training-app' ? (
+          <TrainingApp accessLevel={accessLevel} />
         ) : (
           <iframe
             key={iframeKey}

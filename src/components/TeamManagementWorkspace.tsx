@@ -95,7 +95,7 @@ const APP_SHORT_LABELS: Record<string, string> = {
   'plan-drawing-list': 'Plan Drawing List',
   'iso-tools': 'ISO Tools',
   'mto-manager': 'MTO Manager',
-  'transmittal': 'Transmittal',
+  'training-app': 'Trainning App',
   'calendar': 'Milestones',
   'reports': 'Reports',
   'team-settings': 'Team Settings',
